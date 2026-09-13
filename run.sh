@@ -23,6 +23,16 @@ set -euo pipefail
 # (voir lib/bashio sur github.com/hassio-addons/bashio) et qu'aucune
 # variable de ce script n'est lue avant d'être assignée.
 
+# shellcheck source=/dev/null
+source /opt/btui/lib/btui.sh
+mkdir -p "${BTUI_STATE_DIR}"
+# Fonctions partagées avec la page d'appairage (2.5.0) : noms des sinks et
+# cartes PulseAudio, décalage de synchro, fichiers d'état de /tmp/btui
+# (groupes démarrés, décalages en cours). Une seule définition pour les
+# deux, plutôt que deux copies qui finiraient par diverger. Charger ce
+# fichier ne lance rien (constantes et fonctions, plus une valeur par
+# défaut de PULSE_SERVER, voir btui.sh).
+
 mkdir -p /var/lib/mpd/playlists /var/lib/mpd/music
 # Recréé au démarrage du conteneur (pas seulement à la construction de
 # l'image) : sur le premier essai, MPD plantait avec "Failed to open
@@ -120,32 +130,137 @@ bashio::log.info "Target speaker: ${SPEAKER_NAME} (${BT_MAC})"
 # (étape 3/6) sans rien changer à ce chemin existant.
 SPEAKERS_MAC=("${BT_MAC}")
 SPEAKERS_NAME=("${SPEAKER_NAME}")
+SPEAKERS_LATENCY=("$(bashio::config 'speaker_latency_offset_ms' 0)")
 EXTRA_SPEAKERS_COUNT=$(bashio::config 'extra_speakers|length')
 for ((i = 0; i < EXTRA_SPEAKERS_COUNT; i++)); do
     SPEAKERS_MAC+=("$(bashio::config "extra_speakers[${i}].mac")")
     SPEAKERS_NAME+=("$(bashio::config "extra_speakers[${i}].name")")
+    SPEAKERS_LATENCY+=("$(bashio::config "extra_speakers[${i}].latency_offset_ms" 0)")
 done
 if ((EXTRA_SPEAKERS_COUNT > 0)); then
     bashio::log.info "${EXTRA_SPEAKERS_COUNT} extra speaker(s) configured (${#SPEAKERS_MAC[@]} total)."
 fi
 
+# Décalage de synchro de chaque enceinte (2.5.0, voir apply_latency_offset
+# dans btui.sh) : SPEAKERS_LATENCY[] garde la valeur de la configuration au
+# démarrage, mais la valeur EN COURS vit dans BTUI_LATENCY_FILE, que la
+# page d'appairage modifie en direct sans redémarrer l'add-on. C'est ce
+# fichier que relit la boucle de surveillance (étape 5) — relire
+# SPEAKERS_LATENCY[] y annulerait à chaque passage un réglage fait depuis
+# la page. Une valeur hors bornes (impossible via le schema, mais on ne
+# prend pas le risque de faire planter jq plus bas) retombe à 0.
+echo '{}' >"${BTUI_LATENCY_FILE}"
+for i in "${!SPEAKERS_MAC[@]}"; do
+    if ! [[ "${SPEAKERS_LATENCY[i]}" =~ ^[0-9]+$ ]] || ((SPEAKERS_LATENCY[i] > BTUI_LATENCY_MAX)); then
+        SPEAKERS_LATENCY[i]=0
+    fi
+    latency_set_runtime "${SPEAKERS_MAC[i]}" "${SPEAKERS_LATENCY[i]}" || true
+done
+
+# --- 1quinquies. Groupes synchronisés (2.5.0) ---
+# `sync_groups` est une liste optionnelle d'objets {name, speakers} (voir
+# config.yaml) — vide par défaut, donc ce bloc ne change rien pour qui ne
+# l'utilise pas. Chaque groupe valide deviendra un sink PulseAudio combiné
+# (étape 4ter) et un renderer gmediarender de plus (étape 5bis).
+# Tableaux parallèles GROUPS_*[], indicés comme sync_groups dans la
+# configuration : un groupe ignoré garde sa place (sink vide, raison dans
+# GROUPS_ERROR[]), pour que l'indice reste celui du nom de sink
+# bab_sync_<indice>. Un groupe mal formé n'arrête jamais l'add-on : il est
+# ignoré avec un message dans le journal ET sur la page d'appairage
+# (groups.json), et tout le reste démarre normalement.
+
+# speaker_index <mac> — indice de l'enceinte dans SPEAKERS_MAC[] (casse
+# ignorée) ; code 1 si elle n'est pas configurée.
+speaker_index() {
+    local j
+    for j in "${!SPEAKERS_MAC[@]}"; do
+        if [ "${SPEAKERS_MAC[j]^^}" = "${1^^}" ]; then
+            echo "${j}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+GROUPS_NAME=()
+GROUPS_MEMBERS=()
+# Adresses MAC (majuscules) des membres, séparées par des espaces.
+GROUPS_SINK=()
+GROUPS_ERROR=()
+SYNC_GROUPS_COUNT=$(bashio::config 'sync_groups|length')
+for ((i = 0; i < SYNC_GROUPS_COUNT; i++)); do
+    group_name=$(bashio::config "sync_groups[${i}].name")
+    group_speakers=$(bashio::config "sync_groups[${i}].speakers")
+    group_error=""
+    group_members=()
+    read -ra group_parts <<<"${group_speakers//,/ }"
+    for member in "${group_parts[@]}"; do
+        member="${member^^}"
+        if ! valid_mac "${member}"; then
+            bashio::log.warning "Sync group \"${group_name}\": \"${member}\" is not a valid MAC address, ignored." || true
+        elif ! speaker_index "${member}" >/dev/null; then
+            bashio::log.warning "Sync group \"${group_name}\": ${member} is not a configured speaker (bluetooth_mac or extra_speakers), ignored." || true
+        elif [[ " ${group_members[*]} " != *" ${member} "* ]]; then
+            group_members+=("${member}")
+        fi
+    done
+    if [ -z "${group_name}" ] || [ "${group_name}" = "null" ]; then
+        group_error="This group has no name."
+    elif ((${#group_members[@]} < 2)); then
+        group_error="A synchronized group needs at least two speakers configured in this add-on."
+    else
+        # Nom unique (casse ignorée) : l'UUID DLNA d'un groupe est dérivé
+        # de son nom (étape 5bis), deux groupes du même nom seraient
+        # fusionnés en une seule entité par Home Assistant.
+        for ((j = 0; j < i; j++)); do
+            if [ "${GROUPS_NAME[j],,}" = "${group_name,,}" ]; then
+                group_error="Another group already uses this name."
+            fi
+        done
+    fi
+    GROUPS_NAME+=("${group_name}")
+    GROUPS_MEMBERS+=("${group_members[*]}")
+    GROUPS_ERROR+=("${group_error}")
+    if [ -n "${group_error}" ]; then
+        GROUPS_SINK+=("")
+        bashio::log.error "Sync group \"${group_name}\" ignored: ${group_error}" || true
+    else
+        GROUPS_SINK+=("bab_sync_${i}")
+        bashio::log.info "Sync group \"${group_name}\": ${#group_members[@]} speakers (${group_members[*]})." || true
+    fi
+done
+
+# write_groups_state — écrit BTUI_GROUPS_FILE pour la page d'appairage :
+# ce que run.sh a réellement démarré, avec la raison des groupes ignorés.
+write_groups_state() {
+    local i tmp="${BTUI_GROUPS_FILE}.$$.tmp"
+    local -a entries=()
+    for i in "${!GROUPS_NAME[@]}"; do
+        entries+=("$(jq -cn \
+            --arg name "${GROUPS_NAME[i]}" \
+            --arg members "${GROUPS_MEMBERS[i]}" \
+            --arg sink "${GROUPS_SINK[i]}" \
+            --arg error "${GROUPS_ERROR[i]}" \
+            '{
+                name: $name,
+                members: ($members | split(" ") | map(select(. != ""))),
+                sink: (if $sink == "" then null else $sink end),
+                error: (if $error == "" then null else $error end)
+            }')")
+    done
+    printf '%s\n' "${entries[@]}" | jq -cs '.' >"${tmp}" && mv -f "${tmp}" "${BTUI_GROUPS_FILE}"
+}
+write_groups_state || bashio::log.warning "Could not write the sync groups state for the pairing web UI." || true
+
 # --- 2. Calcul du nom du sink PulseAudio correspondant ---
 # PulseAudio nomme les sinks Bluetooth en remplaçant les ":" par des "_"
 # et en les collant au format bluez_sink.<MAC>.a2dp_sink.
 # Exemple : AA:BB:CC:DD:EE:FF  ->  AA_BB_CC_DD_EE_FF
-# Fonction (plutôt qu'un calcul en ligne) car nécessaire pour CHAQUE
-# enceinte du tableau ci-dessus depuis le multi-enceintes, pas seulement
-# la première.
-sink_for_mac() {
-    local mac_underscore
-    mac_underscore=$(echo "$1" | tr ':' '_')
-    echo "bluez_sink.${mac_underscore}.a2dp_sink"
-}
-card_for_mac() {
-    local mac_underscore
-    mac_underscore=$(echo "$1" | tr ':' '_')
-    echo "bluez_card.${mac_underscore}"
-}
+# Fonctions sink_for_mac/card_for_mac (plutôt qu'un calcul en ligne) car
+# nécessaires pour CHAQUE enceinte du tableau ci-dessus depuis le
+# multi-enceintes, pas seulement la première. Déplacées telles quelles
+# dans btui.sh en 2.5.0 (sourcé en tête de ce script), pour servir aussi à
+# la page d'appairage.
 
 BLUETOOTH_SINK=$(sink_for_mac "${BT_MAC}")
 BLUETOOTH_CARD=$(card_for_mac "${BT_MAC}")
@@ -273,6 +388,134 @@ sleep 2
 # la connexion avant de vérifier/forcer leur profil.
 for i in "${!SPEAKERS_MAC[@]}"; do
     ensure_audio_sink "$(sink_for_mac "${SPEAKERS_MAC[i]}")" "$(card_for_mac "${SPEAKERS_MAC[i]}")"
+    # Décalage de synchro (2.5.0) : appliqué même à 0, pour effacer une
+    # valeur plus ancienne que PulseAudio aurait gardée pour cette carte
+    # (module-card-restore la mémorise d'un démarrage à l'autre).
+    if apply_latency_offset "${SPEAKERS_MAC[i]}" "${SPEAKERS_LATENCY[i]}"; then
+        if ((SPEAKERS_LATENCY[i] > 0)); then
+            bashio::log.info "Sync offset of ${SPEAKERS_NAME[i]}: ${SPEAKERS_LATENCY[i]} ms." || true
+        fi
+    elif ((SPEAKERS_LATENCY[i] > 0)); then
+        bashio::log.warning "Could not apply the sync offset of ${SPEAKERS_NAME[i]} yet (not connected?), will retry in the monitoring loop." || true
+    fi
+done
+
+# --- 4ter. Groupes synchronisés : sinks combinés (2.5.0) ---
+# Un groupe = un sink PulseAudio "combiné" (module-combine-sink) qui
+# alimente tous ses membres à partir d'un seul flux. C'est lui qui fait la
+# synchro : il corrige en continu la dérive d'horloge entre les enceintes
+# (en rééchantillonnant très légèrement chaque sortie, écart plafonné à
+# 1 %) et aligne leurs latences déclarées, décalage de synchro compris
+# (voir apply_latency_offset dans btui.sh). Ni DLNA ni MPD ne permettent de
+# synchroniser plusieurs lecteurs côté Music Assistant (vérifié le
+# 2026-09-13 dans le code de son fournisseur MPD et dans sa documentation
+# des groupes) : c'est donc ici, sous les lecteurs, que ça se fait.
+#
+# Trois comportements du module, vérifiés dans son code source, dictent la
+# suite :
+# - il REFUSE de se charger si l'un des sinks membres n'existe pas : on le
+#   charge avec les membres présents, puis on le recharge quand un membre
+#   manquant apparaît (ensure_sync_group) ;
+# - une fois chargé, un membre qui disparaît (déconnexion Bluetooth) puis
+#   réapparaît sous le même nom est réintégré tout seul ;
+# - il ne se met JAMAIS en veille de lui-même : il compte pour ça sur
+#   module-suspend-on-idle, que le PulseAudio partagé de HAOS ne charge pas
+#   (vérifié dans rootfs/etc/pulse/system.pa du plugin audio). Sans rien
+#   faire, un groupe enverrait donc du silence en permanence à ses
+#   enceintes : CPU occupé, radio Bluetooth sollicitée, enceintes qui ne se
+#   mettent jamais en veille. D'où la mise en veille gérée par ce script
+#   (étape 5, watch_sync_groups), limitée à NOS sinks : charger
+#   suspend-on-idle changerait le comportement de tout le serveur audio de
+#   HAOS, pour tous les add-ons.
+# Les modules chargés vivent dans ce serveur audio partagé, pas dans le
+# conteneur : ils survivent à un redémarrage de l'add-on, d'où le ménage au
+# démarrage (unload_stale_sync_groups).
+
+# combine_module_for <sink> — affiche "index<TAB>membres" (membres séparés
+# par des virgules) du module qui porte ce sink ; rien s'il n'est pas
+# chargé. L'espace après le nom évite que bab_sync_1 corresponde aussi à
+# bab_sync_10 : ensure_sync_group passe toujours sink_name en premier.
+combine_module_for() {
+    LC_ALL=C pactl list short modules 2>/dev/null | awk -v key="sink_name=$1 " '
+        $2 == "module-combine-sink" && index($0, key) {
+            slaves = $0; sub(/.*slaves=/, "", slaves); sub(/[ \t].*/, "", slaves)
+            print $1 "\t" slaves; exit
+        }' || true
+}
+
+# unload_stale_sync_groups — décharge les sinks combinés laissés par un
+# démarrage précédent, y compris ceux de groupes supprimés depuis de la
+# configuration. Ne touche qu'aux sinks dont le nom commence par
+# "bab_sync_" (ceux de cet add-on).
+unload_stale_sync_groups() {
+    local module
+    for module in $(LC_ALL=C pactl list short modules 2>/dev/null \
+        | awk '$2 == "module-combine-sink" && index($0, "sink_name=bab_sync_") { print $1 }' || true); do
+        pactl unload-module "${module}" 2>/dev/null || true
+    done
+}
+
+# ensure_sync_group <indice> — crée le sink combiné du groupe s'il manque,
+# ou le recharge si un membre absent lors du chargement est apparu depuis
+# — seulement quand aucun flux ne joue sur le groupe, pour ne jamais couper
+# une lecture. Appelée au démarrage puis à chaque passage de
+# monitor_sync_groups (étape 5).
+ensure_sync_group() {
+    local i="$1"
+    local sink="${GROUPS_SINK[i]}" name="${GROUPS_NAME[i]}"
+    local mac slave module_line module loaded description new_member=false
+    local -a members present=()
+    read -ra members <<<"${GROUPS_MEMBERS[i]}"
+    for mac in "${members[@]}"; do
+        slave=$(sink_for_mac "${mac}")
+        if [ -n "$(pulse_sink_state "${slave}")" ]; then
+            present+=("${slave}")
+        fi
+    done
+
+    module_line=$(combine_module_for "${sink}")
+    if [ -n "${module_line}" ]; then
+        module="${module_line%%$'\t'*}"
+        loaded=",${module_line#*$'\t'},"
+        for slave in "${present[@]}"; do
+            if [[ "${loaded}" != *",${slave},"* ]]; then
+                new_member=true
+            fi
+        done
+        if [ "${new_member}" = false ]; then
+            return 0
+        fi
+        if (($(sink_input_count "${sink}") > 0)); then
+            return 0
+        fi
+        pactl unload-module "${module}" 2>/dev/null || true
+    fi
+    if ((${#present[@]} == 0)); then
+        return 0
+    fi
+
+    # Nom lisible du sink (visible avec pactl) : apostrophes, guillemets et
+    # antislash retirés, ils casseraient la syntaxe des arguments du module.
+    # Le nom affiché dans Home Assistant vient de gmediarender (étape 5bis)
+    # et n'est pas concerné.
+    description=$(printf '%s' "${name}" | tr -d "'\"\\\\" | tr -d '[:cntrl:]')
+    if ! pactl load-module module-combine-sink \
+        "sink_name=${sink}" \
+        "slaves=$(IFS=,; echo "${present[*]}")" \
+        "sink_properties=\"device.description='${description}'\"" >/dev/null 2>&1; then
+        bashio::log.warning "Could not create the audio output of sync group \"${name}\", will retry in the monitoring loop." || true
+        return 0
+    fi
+    # En veille dès sa création : réveillé à la demande (watch_sync_groups).
+    pactl suspend-sink "${sink}" 1 2>/dev/null || true
+    bashio::log.info "Sync group \"${name}\" ready with ${#present[@]} of ${#members[@]} speaker(s)." || true
+}
+
+unload_stale_sync_groups
+for i in "${!GROUPS_SINK[@]}"; do
+    if [ -n "${GROUPS_SINK[i]}" ]; then
+        ensure_sync_group "${i}" || true
+    fi
 done
 
 # --- 5. Boucle de surveillance Bluetooth (tourne en tâche de fond) ---
@@ -299,6 +542,11 @@ monitor_speaker() {
         # le profil PulseAudio peut rester bloqué sur "off" alors que
         # Bluetooth se dit déjà connecté depuis un moment (voir 4bis).
         ensure_audio_sink "${sink}" "${card}"
+        # Décalage de synchro (2.5.0) : réappliqué à chaque passage (pactl
+        # n'est appelé que si la valeur a changé), car la carte PulseAudio
+        # est recréée à chaque reconnexion. Valeur EN COURS relue dans
+        # BTUI_LATENCY_FILE, que la page d'appairage modifie en direct.
+        apply_latency_offset "${mac}" "$(latency_for_mac "${mac}")" || true
     done
 }
 for i in "${!SPEAKERS_MAC[@]}"; do
@@ -312,6 +560,95 @@ for i in "${!SPEAKERS_MAC[@]}"; do
     # (elle ne se termine jamais, c'est voulu) — une par enceinte.
 done
 
+# --- 5ter. Surveillance et mise en veille des groupes synchronisés (2.5.0) ---
+# Deux boucles de fond, lancées seulement s'il y a au moins un groupe :
+# - monitor_sync_groups, au même rythme que la surveillance Bluetooth,
+#   (re)crée les sinks combinés au besoin (membre revenu, serveur audio
+#   redémarré...) ;
+# - watch_sync_groups réveille un groupe dès qu'un flux arrive dessus, et
+#   le remet en veille quelques secondes après le dernier (pourquoi : voir
+#   4ter). Elle réagit aux événements de PulseAudio (pactl subscribe)
+#   plutôt qu'à un sondage régulier : réveil immédiat, et rien de consommé
+#   entre deux événements.
+
+SYNC_GROUP_IDLE_SECONDS=5
+# Délai avant la mise en veille après le dernier flux : évite de couper
+# puis réveiller le groupe entre deux morceaux.
+
+ACTIVE_GROUP_SINKS=()
+for i in "${!GROUPS_SINK[@]}"; do
+    if [ -n "${GROUPS_SINK[i]}" ]; then
+        ACTIVE_GROUP_SINKS+=("${GROUPS_SINK[i]}")
+    fi
+done
+
+# wake_sync_group <sink> — sort le groupe de veille si un flux l'attend.
+# Un flux qui arrive sur un sink mis en veille à la main (pactl
+# suspend-sink) est bien accepté, mais reste bloqué tant que le sink n'est
+# pas réveillé : PulseAudio ne le fait pas de lui-même dans ce cas.
+wake_sync_group() {
+    local sink="$1"
+    if [ "$(pulse_sink_state "${sink}")" = "SUSPENDED" ] && (($(sink_input_count "${sink}") > 0)); then
+        pactl suspend-sink "${sink}" 0 2>/dev/null || true
+    fi
+}
+
+# sleep_sync_group <sink> — met le groupe en veille s'il n'a plus de flux.
+sleep_sync_group() {
+    local sink="$1" state
+    state=$(pulse_sink_state "${sink}")
+    if [ -n "${state}" ] && [ "${state}" != "SUSPENDED" ] && (($(sink_input_count "${sink}") == 0)); then
+        pactl suspend-sink "${sink}" 1 2>/dev/null || true
+    fi
+}
+
+monitor_sync_groups() {
+    local i
+    while true; do
+        sleep "${RECONNECT_INTERVAL}"
+        for i in "${!GROUPS_SINK[@]}"; do
+            if [ -n "${GROUPS_SINK[i]}" ]; then
+                ensure_sync_group "${i}" || true
+                # Filet de sécurité si un événement a été manqué (pendant un
+                # redémarrage du serveur audio, par exemple).
+                wake_sync_group "${GROUPS_SINK[i]}" || true
+                sleep_sync_group "${GROUPS_SINK[i]}" || true
+            fi
+        done
+    done
+}
+
+watch_sync_groups() {
+    local line sink
+    while true; do
+        # "pactl subscribe" s'arrête si le serveur audio redémarre : on le
+        # relance après une courte pause.
+        LC_ALL=C pactl subscribe 2>/dev/null | while read -r line; do
+            case "${line}" in
+                *"'new' on sink-input"* | *"'change' on sink-input"*)
+                    for sink in "${ACTIVE_GROUP_SINKS[@]}"; do
+                        wake_sync_group "${sink}" || true
+                    done
+                    ;;
+                *"'remove' on sink-input"*)
+                    (
+                        sleep "${SYNC_GROUP_IDLE_SECONDS}"
+                        for sink in "${ACTIVE_GROUP_SINKS[@]}"; do
+                            sleep_sync_group "${sink}" || true
+                        done
+                    ) &
+                    ;;
+            esac
+        done || true
+        sleep 5
+    done
+}
+
+if ((${#ACTIVE_GROUP_SINKS[@]} > 0)); then
+    monitor_sync_groups &
+    watch_sync_groups &
+fi
+
 # --- 5bis. Lancement du media_player natif (renderer DLNA/UPnP) ---
 # Tourne en tâche de fond, INDÉPENDAMMENT de ENABLE_MPD : c'est la nouvelle
 # capacité de ce projet (media_player natif, voir le vault "HA - Bluetooth
@@ -320,6 +657,33 @@ done
 # core "dlna_dmr" (découverte réseau SSDP, aucune config manuelle côté HA).
 # Nécessite "host_network: true" dans config.yaml (voir commentaire associé)
 # pour que la découverte SSDP fonctionne.
+
+# uuid_for_key <clé> — UUID stable dérivé d'une clé (MAC d'une enceinte,
+# ou "sync_group:<nom>" pour un groupe), au format attendu par
+# gmediarender. Pourquoi un UUID dérivé : voir le commentaire dans la
+# boucle des enceintes plus bas.
+uuid_for_key() {
+    local hash
+    hash=$(echo -n "$1" | md5sum | cut -c1-32)
+    echo "${hash:0:8}-${hash:8:4}-${hash:12:4}-${hash:16:4}-${hash:20:12}"
+}
+
+# start_gmediarender <nom affiché> <sink PulseAudio> <clé d'UUID>
+# Fonction depuis 2.5.0 : même lancement pour une enceinte et pour un
+# groupe synchronisé.
+start_gmediarender() {
+    local uuid
+    uuid=$(uuid_for_key "$3")
+    bashio::log.info "gmediarender binary found ($(command -v gmediarender)), starting for $1 with uuid=${uuid}..."
+    gmediarender \
+        --gstout-audiosink=pulsesink \
+        --gstout-audiodevice="$2" \
+        --friendly-name="$1" \
+        --uuid="${uuid}" \
+        --logfile=stdout \
+        &
+}
+
 if command -v gmediarender >/dev/null 2>&1; then
     # Une instance PAR enceinte configurée (2.3.0, multi-enceintes) : c'est
     # ce qui donne, côté Home Assistant, un media_player DLNA distinct et
@@ -343,16 +707,24 @@ if command -v gmediarender >/dev/null 2>&1; then
         # même mécanisme, déjà en place avant le multi-enceintes, qui permet
         # à plusieurs instances de coexister proprement une fois mises en
         # boucle ici.
-        mac_hash=$(echo -n "${mac}" | md5sum | cut -c1-32)
-        uuid="${mac_hash:0:8}-${mac_hash:8:4}-${mac_hash:12:4}-${mac_hash:16:4}-${mac_hash:20:12}"
-        bashio::log.info "gmediarender binary found ($(command -v gmediarender)), starting for ${name} with uuid=${uuid}..."
-        gmediarender \
-            --gstout-audiosink=pulsesink \
-            --gstout-audiodevice="${sink}" \
-            --friendly-name="${name}" \
-            --uuid="${uuid}" \
-            --logfile=stdout \
-            &
+        # Clé = la MAC telle que configurée, exactement comme avant 2.5.0
+        # (même calcul, déplacé dans uuid_for_key) : une enceinte garde
+        # son entité media_player existante.
+        start_gmediarender "${name}" "${sink}" "${mac}"
+    done
+
+    # Une instance de plus par groupe synchronisé (2.5.0), branchée sur son
+    # sink combiné (étape 4ter) : c'est ce qui donne un media_player
+    # "groupe" dans Home Assistant, et un lecteur dans Music Assistant via
+    # son fournisseur DLNA. UUID dérivé du nom du groupe, préfixé pour ne
+    # jamais tomber sur celui d'une enceinte : stable d'un redémarrage à
+    # l'autre, mais un groupe renommé devient une nouvelle entité
+    # (documenté dans le README). Lancée même si aucune enceinte du groupe
+    # n'est connectée : gmediarender n'ouvre le sink qu'au moment de jouer.
+    for i in "${!GROUPS_SINK[@]}"; do
+        if [ -n "${GROUPS_SINK[i]}" ]; then
+            start_gmediarender "${GROUPS_NAME[i]}" "${GROUPS_SINK[i]}" "sync_group:${GROUPS_NAME[i],,}"
+        fi
     done
 else
     bashio::log.error "gmediarender binary NOT FOUND — compilation Dockerfile probablement en échec silencieux, voir le journal de build."

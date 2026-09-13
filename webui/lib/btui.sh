@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034
+# (SC2034 désactivé pour tout le fichier : plusieurs constantes BTUI_*
+# ne servent qu'à run.sh et aux CGI qui sourcent ce fichier, pas à ce
+# fichier lui-même — shellcheck les croirait inutilisées.)
 # ============================================================
 # btui.sh — Fonctions partagées de la page d'appairage Bluetooth
 # ============================================================
@@ -8,6 +12,12 @@
 # 1ter). Il regroupe tout ce qui touche au Bluetooth (bluetoothctl), aux
 # réponses HTTP, aux opérations longues en arrière-plan et à l'API du
 # Supervisor, pour que les deux CGI restent courts et lisibles.
+#
+# Depuis 2.5.0, run.sh le source aussi : les fonctions PulseAudio (noms de
+# sink/carte, décalage de synchro) et les fichiers d'état des groupes
+# synchronisés servent aux deux, avec une seule définition. Charger ce
+# fichier ne lance rien, à part la valeur par défaut de PULSE_SERVER (voir
+# section PulseAudio).
 #
 # Pourquoi du bash + bluetoothctl plutôt qu'un vrai backend (Python, D-Bus
 # natif...) : même philosophie que le reste du projet — s'appuyer sur les
@@ -30,6 +40,19 @@ BTUI_DEVICES_FILE="${BTUI_STATE_DIR}/devices.json"
 BTUI_SESSION_LOG="${BTUI_STATE_DIR}/bluetoothctl.log"
 BTUI_LOCK_DIR="${BTUI_STATE_DIR}/lock"
 
+BTUI_GROUPS_FILE="${BTUI_STATE_DIR}/groups.json"
+# Groupes synchronisés tels que run.sh les a réellement démarrés (2.5.0) :
+# nom, membres, sink PulseAudio — ou raison pour laquelle un groupe a été
+# ignoré. Écrit une fois au démarrage par run.sh, lu par la page.
+
+BTUI_LATENCY_FILE="${BTUI_STATE_DIR}/latency.json"
+# Décalage de synchro en cours de chaque enceinte, en ms ({"AA:BB:...": 20}).
+# Source de vérité PENDANT l'exécution, partagée entre run.sh (qui le
+# réapplique après chaque reconnexion) et la page (qui le règle en direct).
+# Nécessaire parce que /data/options.json n'est réécrit par le Supervisor
+# qu'au démarrage de l'add-on : après un réglage enregistré sans
+# redémarrage, ce fichier-là est en retard (voir options_current_json).
+
 BTUI_OPTIONS_FILE="/data/options.json"
 # Fichier où le Supervisor écrit les options validées de l'add-on — celui
 # que lit aussi bashio::config dans run.sh.
@@ -51,6 +74,19 @@ BTUI_PAIR_TIMEOUT=30
 # que celle utilisée en parallèle par l'intégration "bluetooth" de Home
 # Assistant pour ses capteurs BLE. On ne scanne donc jamais en continu,
 # seulement à la demande et pendant un temps limité.
+
+BTUI_LATENCY_MAX=500
+BTUI_LATENCY_STEP=10
+# Bornes du décalage de synchro, les mêmes que le schema de config.yaml
+# (int(0,500)). Pas de valeur négative : pour aligner des enceintes, il
+# suffit toujours d'augmenter celui de l'enceinte qui sonne en retard. Ça
+# évite aussi de dépendre de bornes négatives dans le schema, que la
+# documentation des add-ons ne mentionne pas.
+
+BTUI_TICKS_SECONDS=20
+# Durée des tics de test joués sur un groupe (voir job_ticks) : assez pour
+# ajuster un curseur à l'oreille, sans occuper indéfiniment le verrou des
+# opérations.
 
 # ============================================================
 # Réponses HTTP (CGI)
@@ -257,7 +293,121 @@ bt_scan_session() {
 }
 
 # ============================================================
-# Opérations longues en arrière-plan (scan, appairage)
+# PulseAudio (sinks, décalage de synchro)
+# ============================================================
+# Tout passe par pactl sur le serveur audio partagé du Supervisor (audio:
+# true dans config.yaml), comme ensure_audio_sink dans run.sh. Toutes les
+# lectures de sortie de pactl se font avec LC_ALL=C : les mots-clés
+# analysés ici ("latency offset", "Part of profile(s)"...) seraient
+# traduits si une locale était un jour définie dans le conteneur.
+
+if [ -z "${PULSE_SERVER:-}" ] && [ -S /run/audio/pulse.sock ]; then
+    export PULSE_SERVER="unix:/run/audio/pulse.sock"
+fi
+# Même socket que celui donné à MPD dans mpd.conf.template. Normalement
+# pactl le trouve déjà tout seul, et httpd transmet son environnement aux
+# CGI (SUPERVISOR_TOKEN y est lu de la même façon) : simple filet de
+# sécurité pour que les réglages en direct de la page trouvent toujours le
+# serveur audio. Jamais écrasé s'il est déjà défini.
+
+# sink_for_mac <mac> / card_for_mac <mac>
+# PulseAudio nomme les sinks Bluetooth en remplaçant les ":" par des "_"
+# et en les collant au format bluez_sink.<MAC>.a2dp_sink.
+# Exemple : AA:BB:CC:DD:EE:FF  ->  AA_BB_CC_DD_EE_FF
+# Déplacées ici depuis run.sh en 2.5.0 (inchangées) pour servir aussi à la
+# page d'appairage.
+sink_for_mac() {
+    echo "bluez_sink.${1//:/_}.a2dp_sink"
+}
+card_for_mac() {
+    echo "bluez_card.${1//:/_}"
+}
+
+# pulse_sink_state <sink> — RUNNING, IDLE ou SUSPENDED ; rien si le sink
+# n'existe pas. Dernière colonne de "pactl list short sinks" (le format
+# audio au milieu contient des espaces, d'où $NF plutôt qu'un numéro fixe).
+pulse_sink_state() {
+    LC_ALL=C pactl list short sinks 2>/dev/null \
+        | awk -v sink="$1" '$2 == sink { print $NF; exit }' || true
+}
+
+# sink_input_count <sink> — nombre de flux audio attachés à ce sink.
+sink_input_count() {
+    local sink_index
+    sink_index=$(LC_ALL=C pactl list short sinks 2>/dev/null \
+        | awk -v sink="$1" '$2 == sink { print $1; exit }') || true
+    if [ -z "${sink_index}" ]; then
+        echo 0
+        return 0
+    fi
+    LC_ALL=C pactl list short sink-inputs 2>/dev/null \
+        | awk -v idx="${sink_index}" '$2 == idx { n++ } END { print n + 0 }' || true
+}
+
+# card_a2dp_port <carte> — affiche "<port> <décalage actuel en µs>" pour le
+# port de sortie de la carte utilisé par le profil A2DP.
+# Le décalage de latence se règle par PORT de carte, pas par sink. Le nom
+# du port dépend du type d'enceinte déclaré par Bluetooth ("speaker-output",
+# "headset-output", "headphone-output"...) : on le lit donc dans
+# "pactl list cards" plutôt que de le deviner. Analyse du texte plutôt que
+# "pactl -f json" : ce format est récent et ses noms de champs n'ont pas
+# été vérifiés sur la version embarquée, alors que ce texte est stable
+# depuis des années.
+card_a2dp_port() {
+    LC_ALL=C pactl list cards 2>/dev/null | awk -v card="$1" '
+        /^Card #/ { in_card = 0; port = "" }
+        $1 == "Name:" { in_card = ($2 == card) }
+        in_card && /latency offset: / {
+            line = $0; sub(/^[ \t]+/, "", line)
+            port = substr(line, 1, index(line, ":") - 1)
+            offset = line; sub(/.*latency offset: /, "", offset); sub(/ usec.*/, "", offset)
+        }
+        in_card && port ~ /-output$/ && /Part of profile\(s\):/ && /a2dp/ { print port, offset; exit }
+    ' || true
+}
+
+# apply_latency_offset <mac> <ms>
+# Déclare à PulseAudio une latence supplémentaire de <ms> pour cette
+# enceinte. Le sink combiné d'un groupe synchronisé aligne ses membres en
+# tenant compte de la latence déclarée de chacun : augmenter celle d'une
+# enceinte lui fait envoyer le son plus tôt, donc corrige une enceinte qui
+# sonne en retard (traitement interne propre à son modèle, que Bluetooth
+# ne remonte pas). Sans effet audible sur une enceinte qui joue seule.
+# Retourne 0 si c'est appliqué (ou déjà à cette valeur), 1 si la carte
+# n'existe pas (enceinte déconnectée) ou si pactl refuse. N'appelle pactl
+# que si la valeur change : run.sh l'appelle à chaque passage de sa boucle
+# de surveillance.
+apply_latency_offset() {
+    local card port current wanted
+    card=$(card_for_mac "${1^^}")
+    read -r port current <<<"$(card_a2dp_port "${card}")" || true
+    [ -n "${port:-}" ] || return 1
+    wanted=$((${2:-0} * 1000))
+    if [ "${current:-}" = "${wanted}" ]; then
+        return 0
+    fi
+    pactl set-port-latency-offset "${card}" "${port}" "${wanted}" >/dev/null 2>&1
+}
+
+# latency_for_mac <mac> — décalage en cours (ms), 0 si inconnu.
+latency_for_mac() {
+    local value
+    value=$(jq -r --arg mac "${1^^}" '.[$mac] // 0' "${BTUI_LATENCY_FILE}" 2>/dev/null) || value=0
+    [[ "${value}" =~ ^[0-9]+$ ]] || value=0
+    echo "${value}"
+}
+
+# latency_set_runtime <mac> <ms> — enregistre le décalage en cours.
+latency_set_runtime() {
+    local tmp="${BTUI_LATENCY_FILE}.$$.tmp"
+    mkdir -p "${BTUI_STATE_DIR}"
+    [ -s "${BTUI_LATENCY_FILE}" ] || echo '{}' >"${BTUI_LATENCY_FILE}"
+    jq -c --arg mac "${1^^}" --argjson ms "$2" '.[$mac] = $ms' \
+        "${BTUI_LATENCY_FILE}" >"${tmp}" && mv -f "${tmp}" "${BTUI_LATENCY_FILE}"
+}
+
+# ============================================================
+# Opérations longues en arrière-plan (scan, appairage, tics de test)
 # ============================================================
 # Un scan ou un appairage prend jusqu'à une minute : bien trop long pour
 # une requête HTTP qui attendrait la fin. Le CGI lance donc l'opération en
@@ -294,7 +444,9 @@ job_on_exit() {
     rm -rf "${BTUI_LOCK_DIR}"
 }
 
-# job_start <scan|pair> <mac> — lance job_<type> en arrière-plan.
+# job_start <scan|pair|ticks> <argument> — lance job_<type> en arrière-plan.
+# L'argument est une adresse MAC (pair), le sink d'un groupe (ticks) ou
+# vide (scan) ; il est rangé dans le champ "mac" de job.json.
 # Retourne 1 si une autre opération tourne déjà.
 job_start() {
     local type="$1" mac="$2"
@@ -365,14 +517,38 @@ job_pair() {
     fi
 }
 
+# job_ticks <sink> — tics de test sur un groupe synchronisé (2.5.0).
+# Un tic court par seconde, joué sur le sink combiné du groupe : quand les
+# enceintes sont bien alignées, on n'entend qu'un seul tic net ; sinon un
+# écho, que l'on corrige avec le décalage de l'enceinte en retard. Plus
+# simple à juger qu'une musique. gst-launch-1.0 vient du paquet
+# gstreamer-tools (voir Dockerfile) ; le groupe, normalement en veille, est
+# réveillé par run.sh dès que ce flux apparaît (watch_sync_groups).
+# samplesperbuffer=441 à 44100 Hz = 10 ms par tampon, d'où la durée.
+job_ticks() {
+    local sink="$1" rc=0
+    job_set running "Playing test ticks for ${BTUI_TICKS_SECONDS} seconds: raise the offset of any speaker that ticks late, until you hear a single tick."
+    gst-launch-1.0 -q \
+        audiotestsrc wave=ticks freq=880 samplesperbuffer=441 num-buffers=$((BTUI_TICKS_SECONDS * 100)) \
+        ! audio/x-raw,rate=44100 ! audioconvert ! audioresample \
+        ! pulsesink device="${sink}" >/dev/null 2>&1 || rc=$?
+    if ((rc == 0)); then
+        job_set done "Test ticks finished."
+    else
+        echo "[pairing web UI] Test ticks on ${sink} failed (exit code ${rc})." >&2
+        job_set error "Could not play the test ticks (exit code ${rc}), see the add-on log."
+    fi
+}
+
 # ============================================================
 # Configuration de l'add-on (API du Supervisor)
 # ============================================================
 # Le Supervisor fournit SUPERVISOR_TOKEN à tout add-on, et les routes
-# /addons/self/options et /addons/self/restart font partie des appels
-# qu'un add-on peut toujours faire sur lui-même (liste "api_bypass" du
-# Supervisor) : pas besoin de "hassio_api: true" dans config.yaml, donc
-# aucun droit supplémentaire demandé.
+# /addons/self/info, /addons/self/options et /addons/self/restart font
+# partie des appels qu'un add-on peut toujours faire sur lui-même (liste
+# "api_bypass" du Supervisor, vérifiée dans api/middleware/security.py) :
+# pas besoin de "hassio_api: true" dans config.yaml, donc aucun droit
+# supplémentaire demandé.
 
 supervisor_api() {
     local -a args=(-sS --max-time 20 -X "$1" -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}")
@@ -382,14 +558,34 @@ supervisor_api() {
     curl "${args[@]}" "http://supervisor$2"
 }
 
+# options_json — options lues dans /data/options.json. Suffisant pour
+# l'affichage : tout ce qui y figure ne change qu'avec un redémarrage, sauf
+# le décalage de synchro, lu à part (BTUI_LATENCY_FILE).
 options_json() {
     cat "${BTUI_OPTIONS_FILE}" 2>/dev/null || echo '{}'
+}
+
+# options_current_json — options ACTUELLES, demandées au Supervisor.
+# À utiliser avant toute modification : depuis 2.5.0, un réglage de synchro
+# est enregistré sans redémarrage, et /data/options.json (réécrit seulement
+# au démarrage) ne le contient pas encore — repartir de ce fichier
+# effacerait ce réglage. Repli sur le fichier si le Supervisor ne répond
+# pas.
+options_current_json() {
+    local response
+    response=$(supervisor_api GET /addons/self/info 2>/dev/null) || response=""
+    if jq -e '.result == "ok" and (.data.options | type) == "object"' >/dev/null 2>&1 <<<"${response}"; then
+        jq -c '.data.options' <<<"${response}"
+    else
+        options_json
+    fi
 }
 
 # options_apply <options JSON complètes> — retourne 1 et remplit
 # BTUI_API_ERROR en cas de refus. Attention : POST /addons/self/options
 # REMPLACE tout l'objet options (pas de fusion clé par clé) — l'appelant
-# doit donc toujours partir des options actuelles complètes.
+# doit donc toujours partir des options actuelles complètes
+# (options_current_json).
 options_apply() {
     local response
     response=$(supervisor_api POST /addons/self/options "$(jq -cn --argjson options "$1" '{options: $options}')") || response=""

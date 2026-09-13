@@ -70,6 +70,11 @@ RUN apk add --no-cache --virtual .gmrender-build-deps \
         # comme dépendance de libupnp-dev) — erreur constatée au premier test
         # réel : "gmediarender: UpnpActionRequest_get_Socket: symbol not
         # found" au démarrage, binaire présent mais bibliothèque manquante.
+        gstreamer-tools \
+        # Fournit "gst-launch-1.0" (2.5.0) : la page d'appairage s'en sert
+        # pour jouer des tics de test sur un groupe synchronisé, le temps
+        # d'aligner les enceintes à l'oreille (voir webui/lib/btui.sh,
+        # job_ticks). "audiotestsrc" vient déjà de gst-plugins-base.
     && git clone --depth 1 https://github.com/hzeller/gmrender-resurrect.git /tmp/gmrender-resurrect \
     && cd /tmp/gmrender-resurrect \
     && ./autogen.sh \

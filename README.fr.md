@@ -44,6 +44,10 @@ sortie secondaire optionnelle.
   recherche les appareils audio Bluetooth Classic, les appaire, leur fait
   confiance, puis enregistre l'enceinte choisie dans la configuration de
   l'add-on via l'API du Supervisor.
+- **Groupes synchronisés** (optionnels) : un sink PulseAudio combiné par
+  groupe alimente plusieurs enceintes à partir d'un seul flux, en synchro,
+  exposé comme un renderer DLNA/UPnP de plus, voir
+  [Groupes synchronisés](#groupes-synchronisés).
 - Une boucle de fond vérifie la connexion Bluetooth toutes les
   `reconnect_interval` secondes (30s par défaut) et reconnecte
   automatiquement l'enceinte si elle se déconnecte (mise en veille, hors
@@ -250,7 +254,9 @@ qu'à confirmer l'ajout.
 | `reconnect_interval` | Secondes entre deux vérifications de la connexion Bluetooth (10-300). | `30` |
 | `enable_mpd` | Démarre ou non le serveur MPD. La connexion Bluetooth et le `media_player` natif ne sont pas affectés dans un cas comme dans l'autre ; désactivez cette option si vous ne voulez que le `media_player` natif et n'utilisez pas Music Assistant. | `true` |
 | `default_volume` | Volume (%) restauré automatiquement si le sink PulseAudio de l'enceinte est détecté muet ou à 0% (sinon reste silencieux indéfiniment, y compris après un redémarrage). N'écrase jamais un volume que vous avez choisi tant qu'il n'est pas à 0%. | `70` |
-| `extra_speakers` | Liste optionnelle d'enceintes supplémentaires (`mac` + `name` chacune), ajoutables directement depuis l'onglet Configuration. Voir [Plusieurs enceintes](#plusieurs-enceintes). | *(vide)* |
+| `speaker_latency_offset_ms` | Décalage de synchro (0-500 ms) de l'enceinte principale, utilisé seulement quand elle joue dans un groupe synchronisé : augmentez-le si cette enceinte sonne en retard. Le plus simple est de le régler en direct depuis la page d'appairage, voir [Groupes synchronisés](#groupes-synchronisés). | `0` |
+| `extra_speakers` | Liste optionnelle d'enceintes supplémentaires (`mac` + `name` chacune, plus un `latency_offset_ms` facultatif, comme ci-dessus), ajoutables directement depuis l'onglet Configuration. Voir [Plusieurs enceintes](#plusieurs-enceintes). | *(vide)* |
+| `sync_groups` | Liste optionnelle de groupes synchronisés (`name` + `speakers` : les adresses MAC d'au moins deux enceintes configurées, séparées par des virgules). Voir [Groupes synchronisés](#groupes-synchronisés). | *(vide)* |
 
 ## Sortie `media_player` native (DLNA/UPnP)
 
@@ -284,16 +290,17 @@ obtient :
   choisir précisément vers quelle enceinte envoyer un appel
   `play_media`/`tts.speak`.
 
-Ça donne plusieurs sorties sélectionnables indépendamment, pas une
-lecture multi-room synchronisée : chaque enceinte joue ce qu'on lui
-envoie, de son côté — il n'y a pas de mécanisme intégré pour envoyer le
-même son, en synchro, à plusieurs enceintes en même temps.
+Ça donne plusieurs sorties sélectionnables indépendamment : chaque
+enceinte joue ce qu'on lui envoie, de son côté. Pour jouer le même son
+sur plusieurs enceintes à la fois, en synchro, créez un
+[groupe synchronisé](#groupes-synchronisés).
 
-MPD (et donc le fournisseur "MPD Players" de Music Assistant) reste
-attaché uniquement à l'enceinte principale : il n'y a pas de moyen propre
-d'exposer plusieurs sorties MPD comme des entités `media_player`
-distinctes, donc les enceintes supplémentaires ne sont accessibles que
-via le chemin `media_player` natif.
+**Music Assistant** : passez par son fournisseur de lecteurs **DLNA**
+pour les enceintes supplémentaires, il les découvre tout seul, comme Home
+Assistant. MPD (le fournisseur "MPD Players" de Music Assistant) reste
+attaché uniquement à l'enceinte principale : Music Assistant crée un
+lecteur par serveur MPD, pas par sortie audio, donc un seul MPD ne peut
+pas exposer plusieurs enceintes comme des lecteurs distincts.
 
 **Music Assistant affiche des enceintes supplémentaires avec un nom
 générique ou dupliqué** (par exemple deux enceintes toutes les deux
@@ -310,6 +317,60 @@ entité `media_player` n'apparaît pas au bout de quelques minutes, essayez
 un **redémarrage complet de Home Assistant Core** (Paramètres > Système >
 Redémarrer, pas seulement l'add-on) — ça force un nouveau scan SSDP et a
 fiablement fait apparaître l'entité lors de nos tests.
+
+## Groupes synchronisés
+
+Un groupe synchronisé joue le même son sur deux enceintes configurées ou
+plus, en même temps et en synchro. Chaque groupe apparaît comme une
+entité `media_player` native de plus dans Home Assistant, au nom du
+groupe, et dans Music Assistant via son fournisseur DLNA.
+
+**Créer un groupe** : dans le panneau **Bluetooth Audio** de l'add-on,
+section *Synchronized groups*, saisissez un nom, cochez au moins deux
+enceintes, puis cliquez sur **Create group**. L'add-on l'enregistre
+(option `sync_groups`) et redémarre. Vous pouvez aussi en ajouter un
+depuis l'onglet Configuration : un `name`, et `speakers` avec les adresses
+MAC de ses enceintes séparées par des virgules (par exemple
+`AA:BB:CC:DD:EE:01, AA:BB:CC:DD:EE:02`).
+
+**Affiner la synchro** : toutes les enceintes n'ajoutent pas le même
+délai interne, l'une d'elles peut donc sonner légèrement en retard. Sur la
+page d'appairage, cliquez sur **Test ticks** dans le groupe : il joue un
+tic court par seconde pendant 20 secondes. Si vous entendez un écho,
+augmentez le décalage de l'enceinte en retard (le curseur à côté de son
+nom, par pas de 10 ms) jusqu'à n'entendre qu'un seul tic. Le réglage
+s'applique en direct, sans redémarrage, et se stabilise progressivement
+en quelques secondes. Il est enregistré dans la configuration de l'add-on
+(`speaker_latency_offset_ms` pour l'enceinte principale,
+`latency_offset_ms` pour les supplémentaires). Un décalage ne compte que
+dans les groupes : il n'a aucun effet audible quand une enceinte joue
+seule.
+
+**Fonctionnement** : ni DLNA ni MPD ne permettent de synchroniser des
+lecteurs distincts côté Music Assistant, et ses « universal groups » ne
+sont explicitement pas synchronisés. L'add-on le fait donc un cran plus
+bas : chaque groupe est un sink PulseAudio combiné
+(`module-combine-sink`) qui alimente toutes ses enceintes à partir d'un
+seul flux, corrige en continu la dérive d'horloge entre elles, et tient
+compte de la latence déclarée de chacune (plus votre décalage). Quand rien
+ne joue, le groupe se met en veille tout seul : un groupe inactif ne
+consomme pas de CPU et n'empêche pas vos enceintes de se mettre en veille.
+
+**À savoir** :
+- Si une enceinte se déconnecte pendant la lecture du groupe, les autres
+  continuent, et elle réintègre le groupe toute seule une fois
+  reconnectée.
+- Jouer en même temps sur un groupe et sur l'une de ses enceintes mélange
+  les deux sons sur cette enceinte.
+- Renommer un groupe crée une nouvelle entité `media_player` (son
+  identité est dérivée de son nom) ; supprimez l'ancienne dans Home
+  Assistant.
+- La lecture peut démarrer avec une fraction de seconde de retard, le
+  temps que le groupe sorte de veille.
+- Chaque enceinte d'un groupe est un flux audio Bluetooth séparé. Sur un
+  Raspberry Pi 4, la radio intégrée peut peiner avec plusieurs d'entre
+  eux, voir l'entrée sur les grésillements et coupures dans
+  [Dépannage](#dépannage).
 
 ## Voice PE
 

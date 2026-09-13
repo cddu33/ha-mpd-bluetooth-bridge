@@ -31,10 +31,24 @@ configuration:
       ever found muted or at 0% (which otherwise stays silent
       indefinitely, even across reboots, with no visible error). Never
       overrides a volume you've deliberately set as long as it isn't 0%.
+  speaker_latency_offset_ms:
+    name: Sync offset of the primary speaker (ms)
+    description: >-
+      Only used in synchronized groups. Increase it if this speaker sounds
+      late compared to the others (0-500 ms). Easiest to adjust live from
+      the "Bluetooth Audio" panel, while playing its test ticks.
   extra_speakers:
     name: Extra speakers
     description: >-
-      Optional additional Bluetooth speakers (MAC address and name each),
-      each with its own native media_player. Can also be added from the
-      "Bluetooth Audio" panel after pairing. MPD stays on the primary
-      speaker only.
+      Optional additional Bluetooth speakers (MAC address and name each,
+      plus an optional sync offset in ms, see above), each with its own
+      native media_player. Can also be added from the "Bluetooth Audio"
+      panel after pairing. In Music Assistant, use its DLNA provider to
+      reach them: MPD stays on the primary speaker only.
+  sync_groups:
+    name: Synchronized groups
+    description: >-
+      Optional groups of speakers that play the same audio in sync, each
+      exposed as one more native media_player. A name, plus the MAC
+      addresses of at least two configured speakers separated by commas.
+      Easiest to create from the "Bluetooth Audio" panel.

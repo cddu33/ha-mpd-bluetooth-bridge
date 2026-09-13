@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.5.0
+- Added **synchronized groups**: a new `sync_groups` option, and a
+  *Synchronized groups* section on the pairing page, group two or more
+  configured speakers so they play the same audio in sync. Each group
+  shows up as one more native `media_player` in Home Assistant, and in
+  Music Assistant through its DLNA provider. Synchronization happens
+  inside the add-on, in a PulseAudio combined sink (`module-combine-sink`)
+  that keeps the speakers aligned and corrects clock drift between them:
+  neither DLNA nor MPD can synchronize separate players on the Music
+  Assistant side, and its "universal groups" aren't synchronized. A
+  speaker that drops out rejoins its group by itself once reconnected.
+  See [Synchronized groups](README.md#synchronized-groups).
+- Added a per-speaker **sync offset** (`speaker_latency_offset_ms`, and
+  `latency_offset_ms` in `extra_speakers`, 0-500 ms) for speakers that
+  add their own internal delay. It's adjusted live from the pairing page
+  while **test ticks** play on the group, without restarting the add-on.
+- Groups go to standby by themselves when nothing is playing. HAOS's
+  shared PulseAudio server doesn't load `module-suspend-on-idle`, so a
+  combined sink would otherwise stream silence to its speakers forever
+  (constant CPU and Bluetooth radio load, speakers never going to sleep).
+  Only the add-on's own group sinks are touched.
+- Music Assistant: extra speakers and groups are reached through its
+  **DLNA** provider; MPD still covers the primary speaker only. One MPD
+  instance per speaker was considered and dropped: Music Assistant creates
+  one player per MPD server, so it would have added nothing over DLNA.
+- The pairing page now asks the Supervisor for the add-on's current
+  options before changing them, since sync offsets are saved without a
+  restart.
+- Added `gstreamer-tools` to the image (`gst-launch-1.0`, for the test
+  ticks).
+
 ## 2.4.0
 - Added a **pairing page**, opened from a new **Bluetooth Audio** panel in
   the Home Assistant sidebar (ingress, administrators only): scan for

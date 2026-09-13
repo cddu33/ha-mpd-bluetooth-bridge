@@ -41,6 +41,10 @@ original MPD bridge available as an optional second output.
   scripts calling `bluetoothctl`. It scans for Bluetooth Classic audio
   devices, pairs and trusts them, and writes the speaker you pick into
   the add-on's own configuration through the Supervisor API.
+- **Synchronized groups** (optional): one PulseAudio combined sink per
+  group feeds several speakers from a single stream, in sync, exposed as
+  one more DLNA/UPnP renderer, see
+  [Synchronized groups](#synchronized-groups).
 - A background loop checks the Bluetooth connection every
   `reconnect_interval` seconds (default 30s) and reconnects automatically
   if the speaker drops (sleep mode, out of range, etc.).
@@ -227,7 +231,9 @@ with this repository's URL pre-filled, just confirm to add it.
 | `reconnect_interval` | Seconds between Bluetooth connection checks (10-300). | `30` |
 | `enable_mpd` | Whether to start the MPD server. The Bluetooth connection and the native `media_player` are unaffected either way; turn this off if you only want the native `media_player` output and don't use Music Assistant. | `true` |
 | `default_volume` | Volume (%) automatically restored if the speaker's PulseAudio sink is ever found muted or at 0% (otherwise stays silent indefinitely, even across reboots). Never overrides a volume you've deliberately set as long as it isn't 0%. | `70` |
-| `extra_speakers` | Optional list of additional speakers (`mac` + `name` each), editable straight from the Configuration tab. See [Multiple speakers](#multiple-speakers). | *(empty)* |
+| `speaker_latency_offset_ms` | Sync offset (0-500 ms) of the primary speaker, only used when it plays in a synchronized group: increase it if this speaker sounds late. Easiest to set live from the pairing page, see [Synchronized groups](#synchronized-groups). | `0` |
+| `extra_speakers` | Optional list of additional speakers (`mac` + `name` each, plus an optional `latency_offset_ms`, same as above), editable straight from the Configuration tab. See [Multiple speakers](#multiple-speakers). | *(empty)* |
+| `sync_groups` | Optional list of synchronized groups (`name` + `speakers`: the MAC addresses of at least two configured speakers, separated by commas). See [Synchronized groups](#synchronized-groups). | *(empty)* |
 
 ## Native `media_player` output (DLNA/UPnP)
 
@@ -257,15 +263,17 @@ speaker gets:
 - its own native `media_player` entity in Home Assistant, so you can pick
   exactly which speaker a given `play_media`/`tts.speak` call goes to.
 
-This gives you multiple independently selectable outputs, not
-synchronized multi-room playback: each speaker plays whatever you send
-to it, on its own — there's no built-in way to send the same audio, in
-sync, to several speakers at once.
+This gives you multiple independently selectable outputs: each speaker
+plays whatever you send to it, on its own. To play the same audio on
+several speakers at once, in sync, create a
+[synchronized group](#synchronized-groups).
 
-MPD (and by extension Music Assistant's "MPD Players" provider) stays
-attached to the primary speaker only; there's no clean way to expose
-several MPD outputs as separate `media_player` entities, so extra
-speakers are only reachable through the native `media_player` path.
+**Music Assistant**: reach extra speakers through its **DLNA** player
+provider, which discovers them on its own, like Home Assistant does. MPD
+(Music Assistant's "MPD Players" provider) stays attached to the primary
+speaker only: Music Assistant creates one player per MPD server, not per
+audio output, so a single MPD can't expose several speakers as separate
+players.
 
 **Music Assistant shows extra speakers with a generic or duplicate name**
 (e.g. two speakers both labeled "Bluetooth Speaker"): this is a
@@ -281,6 +289,53 @@ If you add a speaker while the add-on is already running and its
 **Home Assistant Core restart** (Settings → System → Restart, not just
 the add-on) — this forces a fresh SSDP scan and reliably surfaced it in
 our testing.
+
+## Synchronized groups
+
+A synchronized group plays the same audio on two or more of your
+configured speakers at the same time, kept in sync. Each group shows up
+as one more native `media_player` in Home Assistant, named after the
+group, and in Music Assistant through its DLNA provider.
+
+**Creating a group**: in the add-on's **Bluetooth Audio** panel, under
+*Synchronized groups*, type a name, tick at least two speakers, then click
+**Create group**. The add-on saves it (`sync_groups` option) and restarts.
+You can also add one from the Configuration tab: a `name`, and `speakers`
+with the MAC addresses of its speakers separated by commas (for example
+`AA:BB:CC:DD:EE:01, AA:BB:CC:DD:EE:02`).
+
+**Fine-tuning the sync**: speakers don't all add the same internal delay,
+so one of them may sound slightly late. On the pairing page, click **Test
+ticks** on the group: it plays one short tick per second for 20 seconds.
+If you hear an echo, raise the offset of the speaker that ticks late (the
+slider next to its name, in 10 ms steps) until you hear a single tick.
+Changes apply live, without restarting, and settle gradually over a few
+seconds. They're saved in the add-on's configuration
+(`speaker_latency_offset_ms` for the primary speaker, `latency_offset_ms`
+for extra ones). An offset only matters inside groups: it has no audible
+effect when a speaker plays on its own.
+
+**How it works**: neither DLNA nor MPD can synchronize separate players
+from Music Assistant's side, and its "universal groups" are explicitly not
+in sync. The add-on does it one level down instead: each group is a
+PulseAudio combined sink (`module-combine-sink`) that feeds all its
+speakers from a single stream, continuously corrects clock drift between
+them, and takes each speaker's reported latency (plus your offset) into
+account. When nothing is playing, the group goes to standby by itself, so
+an idle group costs no CPU and doesn't keep your speakers awake.
+
+**Good to know**:
+- If a speaker disconnects while the group is playing, the others keep
+  going, and it rejoins the group by itself once reconnected.
+- Playing on a group and on one of its speakers at the same time mixes
+  both sounds on that speaker.
+- Renaming a group creates a new `media_player` entity (its identity is
+  derived from its name); remove the old one in Home Assistant.
+- Playback can start a fraction of a second late while the group wakes up
+  from standby.
+- Each speaker in a group is a separate Bluetooth audio stream. On a
+  Raspberry Pi 4, the onboard radio can struggle with several of them,
+  see the crackling/dropouts entry in [Troubleshooting](#troubleshooting).
 
 ## Voice PE
 
