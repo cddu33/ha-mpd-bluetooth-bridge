@@ -229,7 +229,7 @@ with this repository's URL pre-filled, just confirm to add it.
 | `speaker_name` | Cosmetic label for the outputs (MPD and the `media_player` friendly name). | `Bluetooth Speaker` |
 | `reconnect_interval` | Seconds between Bluetooth connection checks (10-300). | `30` |
 | `enable_mpd` | Whether to start the MPD server. The Bluetooth connection and the native `media_player` are unaffected either way; turn this off if you only want the native `media_player` output and don't use Music Assistant. | `true` |
-| `default_volume` | Volume (%) automatically restored if the speaker's PulseAudio sink is ever found muted or at 0% (otherwise stays silent indefinitely, even across reboots). Never overrides a volume you've deliberately set as long as it isn't 0%. It is also the volume each speaker's `media_player` starts at every time the add-on starts or the speaker reconnects (instead of 100%). | `70` |
+| `default_volume` | Volume (%) automatically restored if the speaker's PulseAudio sink is ever found muted or at 0% (otherwise stays silent indefinitely, even across reboots). Never overrides a volume you've deliberately set as long as it isn't 0%. It is also the volume level each speaker's `media_player` starts at (as shown by its volume slider in Home Assistant) every time the add-on starts or the speaker reconnects, instead of 100%. Set it to `100` to keep the previous behavior. | `70` |
 | `extra_speakers` | Optional list of additional speakers (`mac` + `name` each), editable straight from the Configuration tab. See [Multiple speakers](#multiple-speakers). | *(empty)* |
 
 ## Native `media_player` output (DLNA/UPnP)

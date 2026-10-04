@@ -251,7 +251,7 @@ qu'à confirmer l'ajout.
 | `speaker_name` | Nom cosmétique des sorties (MPD et le nom affiché du `media_player`). | `Bluetooth Speaker` |
 | `reconnect_interval` | Secondes entre deux vérifications de la connexion Bluetooth (10-300). | `30` |
 | `enable_mpd` | Démarre ou non le serveur MPD. La connexion Bluetooth et le `media_player` natif ne sont pas affectés dans un cas comme dans l'autre ; désactivez cette option si vous ne voulez que le `media_player` natif et n'utilisez pas Music Assistant. | `true` |
-| `default_volume` | Volume (%) restauré automatiquement si le sink PulseAudio de l'enceinte est détecté muet ou à 0% (sinon reste silencieux indéfiniment, y compris après un redémarrage). N'écrase jamais un volume que vous avez choisi tant qu'il n'est pas à 0%. C'est aussi le volume auquel le `media_player` de chaque enceinte démarre à chaque démarrage de l'add-on ou reconnexion de l'enceinte (au lieu de 100%). | `70` |
+| `default_volume` | Volume (%) restauré automatiquement si le sink PulseAudio de l'enceinte est détecté muet ou à 0% (sinon reste silencieux indéfiniment, y compris après un redémarrage). N'écrase jamais un volume que vous avez choisi tant qu'il n'est pas à 0%. C'est aussi le niveau de volume auquel le `media_player` de chaque enceinte démarre (tel qu'affiché par son curseur de volume dans Home Assistant) à chaque démarrage de l'add-on ou reconnexion de l'enceinte, au lieu de 100%. Mettez `100` pour garder l'ancien comportement. | `70` |
 | `extra_speakers` | Liste optionnelle d'enceintes supplémentaires (`mac` + `name` chacune), ajoutables directement depuis l'onglet Configuration. Voir [Plusieurs enceintes](#plusieurs-enceintes). | *(vide)* |
 
 ## Sortie `media_player` native (DLNA/UPnP)

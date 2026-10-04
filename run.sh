@@ -58,12 +58,15 @@ DEFAULT_VOLUME=$(bashio::config 'default_volume')
 # est détecté muet ou à 0% (voir ensure_audio_sink, étape 4bis). Par défaut
 # 70 (voir config.yaml).
 
-RENDERER_INITIAL_DB=$(awk -v v="${DEFAULT_VOLUME}" 'BEGIN { printf "%.2f", 20 * log(v / 100) / log(10) }')
-# Volume de départ de chaque renderer DLNA, en décibels (ex. 50 % = -6.02,
-# 100 % = 0.00 donc inchangé). Sans cette option, gmediarender démarre à
-# 100 % de son volume de flux, et depuis 2.4.1 il est relancé à chaque
-# reconnexion de l'enceinte : le volume repartait donc à 100 % à chaque fois
-# (GitHub issue #9). default_volume est validé entre 1 et 100 par le schema.
+RENDERER_INITIAL_DB=$(awk -v v="${DEFAULT_VOLUME}" 'BEGIN { printf "%.2f", (v - 100) * 0.4 }')
+# Volume de départ de chaque renderer DLNA, en décibels. Sans cette option,
+# gmediarender démarre à 0 dB (curseur à 100) et, depuis 2.4.1, il est
+# relancé à chaque reconnexion de l'enceinte : le volume repartait donc à
+# 100 à chaque fois (GitHub issue #9). L'échelle UPnP de gmediarender est
+# de 0,4 dB par graduation (curseur 80 = -8 dB, mesuré sur le Pi le
+# 2026-10-04) : ce calcul place donc le curseur de Home Assistant
+# exactement sur default_volume (100 = 0.00 dB, inchangé). default_volume
+# est validé entre 1 et 100 par le schema.
 
 # --- 1ter. Page d'appairage Bluetooth (ingress, 2.4.0) ---
 # Petit serveur web (httpd de busybox-extras) qui sert la page ouverte
