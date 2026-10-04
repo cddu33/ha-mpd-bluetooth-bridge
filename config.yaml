@@ -157,6 +157,7 @@ options:
   reconnect_interval: 30
   enable_mpd: true
   default_volume: 70
+  renderer_volume: 100
   extra_speakers: []
   # bluetooth_mac vide par défaut : depuis 2.4.0, c'est le point de départ
   # normal d'une première installation (mode configuration, voir schema
@@ -209,6 +210,17 @@ schema:
   # N'écrase jamais un volume choisi par l'utilisateur tant qu'il n'est pas
   # à 0% — pas de reset périodique intrusif. Minimum à 1 (pas 0) pour éviter
   # une configuration qui neutraliserait silencieusement ce correctif.
+
+  renderer_volume: "int(1,100)?"
+  # Niveau de volume (curseur du media_player dans Home Assistant) auquel
+  # le renderer DLNA de chaque enceinte démarre, à chaque démarrage de
+  # l'add-on et à chaque reconnexion de l'enceinte (voir run.sh,
+  # RENDERER_INITIAL_DB, GitHub issue #9). Valeur par défaut 100 = ancien
+  # comportement exact (0 dB), donc aucun changement pour qui ne touche pas
+  # à cette option. Facultatif (le "?") pour qu'une configuration existante,
+  # écrite avant l'ajout de cette option, reste valide ; run.sh retombe alors
+  # sur 100. Distinct de default_volume, qui ne concerne que le sink
+  # PulseAudio de l'enceinte.
 
   extra_speakers:
     - mac: "match(^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$)"
