@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.4.2
+- Added a **`renderer_volume`** option (1-100, default `100`) setting the
+  volume level each speaker's `media_player` starts at, as shown by its
+  volume slider in Home Assistant. Since 2.4.1 the renderer is restarted
+  every time a speaker reconnects, and it always came back at 100%, so a
+  volume you had lowered jumped back up each time the speaker was
+  switched off and on again. Set it to the level you want (for example
+  `50`) and the `media_player` now starts there on every start and
+  reconnect. The default of `100` keeps the previous behavior, so nothing
+  changes unless you set it. It is separate from `default_volume`, which
+  still only concerns the speaker's PulseAudio sink. Reported in
+  [#9](https://github.com/dcybeldesign/ha-mpd-bluetooth-bridge/issues/9).
+
 ## 2.4.1
 - Fixed the native `media_player` entity staying "available" in Home
   Assistant even after its speaker disconnected. The DLNA renderer used

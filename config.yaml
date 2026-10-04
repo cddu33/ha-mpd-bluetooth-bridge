@@ -14,7 +14,7 @@ name: "Bluetooth Audio Bridge"
 # Ancien nom : "Bluetooth Speaker MPD Bridge" (ancien nom encore avant :
 # "MPD JBL Bridge").
 
-version: "2.4.1"
+version: "2.4.2"
 # Version de l'add-on. À incrémenter à chaque modification si on veut
 # que le Supervisor propose une "mise à jour" plus tard.
 # Bump en 2.0.0 : changement de nom/slug (rupture de compatibilité pour
@@ -41,6 +41,13 @@ version: "2.4.1"
 # avant merge dans master, en deux passages : une enceinte seule (JBL),
 # puis deux enceintes (JBL + JZ-B5W2) pour vérifier qu'elles restent bien
 # indépendantes l'une de l'autre.
+# Bump en 2.4.2 (2026-10-05) : nouvelle option `renderer_volume` (100 par
+# défaut, donc aucun changement sans action de l'utilisateur) pour que le
+# volume du media_player ne reparte plus à 100 à chaque reconnexion de
+# l'enceinte (voir CHANGELOG, réponse à la GitHub issue #9). Testé sur la
+# branche `fix/issue-9-initial-volume` avant merge dans master : JZ-B5W2,
+# valeur par défaut (inchangée) puis `renderer_volume` à 50 avec cycle de
+# déconnexion/reconnexion.
 
 slug: "bluetooth_audio_bridge"
 # Identifiant technique unique de l'add-on (utilisé dans les URLs internes,
