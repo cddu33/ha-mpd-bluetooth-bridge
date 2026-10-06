@@ -350,10 +350,9 @@ if [ -z "${PULSE_SERVER:-}" ] && [ -S /run/audio/pulse.sock ]; then
     export PULSE_SERVER="unix:/run/audio/pulse.sock"
 fi
 # Même socket que celui donné à MPD dans mpd.conf.template. Normalement
-# pactl le trouve déjà tout seul, et httpd transmet son environnement aux
-# CGI (SUPERVISOR_TOKEN y est lu de la même façon) : simple filet de
-# sécurité pour que les réglages en direct de la page trouvent toujours le
-# serveur audio. Jamais écrasé s'il est déjà défini.
+# pactl le trouve déjà tout seul : simple filet de sécurité pour que les
+# réglages en direct de la page trouvent toujours le serveur audio. Jamais
+# écrasé s'il est déjà défini.
 
 # sink_for_mac <mac> / card_for_mac <mac>
 # PulseAudio nomme les sinks Bluetooth en remplaçant les ":" par des "_"
@@ -478,6 +477,11 @@ job_alive() {
 }
 
 # job_set <état> <message> — met à jour l'opération en cours.
+# <état> toujours entre guillemets à l'appel (running/done/error) : "done"
+# est un mot-clé du langage (fin de boucle), et sans guillemets shellcheck
+# le lit comme tel plutôt que comme le premier argument de job_set
+# (faux positif SC1010) — guillemeter les trois, pas seulement "done",
+# pour rester cohérent.
 job_set() {
     local tmp="${BTUI_JOB_FILE}.$$.tmp"
     jq -c --arg state "$1" --arg message "$2" \
@@ -492,7 +496,7 @@ job_set() {
 job_on_exit() {
     local rc=$?
     if [ "$(jq -r '.state' "${BTUI_JOB_FILE}" 2>/dev/null)" = "running" ]; then
-        job_set error "Unexpected failure (exit code ${rc}), see the add-on log." || true
+        job_set "error" "Unexpected failure (exit code ${rc}), see the add-on log." || true
     fi
     rm -rf "${BTUI_LOCK_DIR}"
 }
@@ -529,13 +533,13 @@ job_start() {
 
 job_scan() {
     local count
-    job_set running "Scanning for ${BTUI_SCAN_SECONDS} seconds... Keep your speaker in pairing mode."
+    job_set "running" "Scanning for ${BTUI_SCAN_SECONDS} seconds... Keep your speaker in pairing mode."
     bt_scan_session "${BTUI_SCAN_SECONDS}"
-    job_set running "Reading scan results..."
+    job_set "running" "Reading scan results..."
     bt_devices_json >"${BTUI_DEVICES_FILE}.$$.tmp"
     mv -f "${BTUI_DEVICES_FILE}.$$.tmp" "${BTUI_DEVICES_FILE}"
     count=$(jq '[.[] | select(.audio)] | length' "${BTUI_DEVICES_FILE}")
-    job_set done "Scan finished: ${count} audio device(s) found."
+    job_set "done" "Scan finished: ${count} audio device(s) found."
 }
 
 job_pair() {
@@ -544,16 +548,16 @@ job_pair() {
     # bluetoothctl, ça peut d'abord SUPPRIMER l'appairage existant. Un
     # appareil appairé mais pas "trusted" passe directement à l'étape trust.
     if ! bt_is_paired "${mac}"; then
-        job_set running "Pairing with ${mac}... Keep the speaker in pairing mode (this can take up to a minute)."
+        job_set "running" "Pairing with ${mac}... Keep the speaker in pairing mode (this can take up to a minute)."
         bt_scan_session "${BTUI_SCAN_SECONDS}" "${mac}"
         if ! bt_is_paired "${mac}"; then
             reason=$(grep -o 'org\.bluez\.Error\.[A-Za-z]*' "${BTUI_SESSION_LOG}" | tail -n 1) || true
             echo "[pairing web UI] Pairing with ${mac} failed${reason:+ (${reason})}." >&2
-            job_set error "Pairing with ${mac} failed${reason:+ (${reason})}. Put the speaker in pairing mode, keep it close to the host and try again. Speakers that ask for a PIN code must be paired manually (see the add-on documentation)."
+            job_set "error" "Pairing with ${mac} failed${reason:+ (${reason})}. Put the speaker in pairing mode, keep it close to the host and try again. Speakers that ask for a PIN code must be paired manually (see the add-on documentation)."
             return 0
         fi
     fi
-    job_set running "Paired. Trusting and connecting..."
+    job_set "running" "Paired. Trusting and connecting..."
     # "trust" est ce qui autorise la reconnexion automatique de run.sh
     # (voir README, dépannage) : c'est l'étape la plus souvent oubliée lors
     # d'un appairage manuel, d'où son automatisation ici.
@@ -562,11 +566,11 @@ job_pair() {
     devices_update "${mac}"
     info=$(bt_info "${mac}")
     if [ "$(info_flag "${info}" Trusted)" != true ]; then
-        job_set error "Paired, but ${mac} could not be marked as trusted: automatic reconnection will not work. Click Pair again."
+        job_set "error" "Paired, but ${mac} could not be marked as trusted: automatic reconnection will not work. Click Pair again."
     elif [ "$(info_flag "${info}" Connected)" != true ]; then
-        job_set done "Paired and trusted, but not connected right now. You can still select it: the add-on reconnects it automatically."
+        job_set "done" "Paired and trusted, but not connected right now. You can still select it: the add-on reconnects it automatically."
     else
-        job_set done "Paired, trusted and connected. Now set it as the primary speaker or add it as an extra one."
+        job_set "done" "Paired, trusted and connected. Now set it as the primary speaker or add it as an extra one."
     fi
 }
 
@@ -580,16 +584,16 @@ job_pair() {
 # samplesperbuffer=441 à 44100 Hz = 10 ms par tampon, d'où la durée.
 job_ticks() {
     local sink="$1" rc=0
-    job_set running "Playing test ticks for ${BTUI_TICKS_SECONDS} seconds: raise the offset of any speaker that ticks late, until you hear a single tick."
+    job_set "running" "Playing test ticks for ${BTUI_TICKS_SECONDS} seconds: raise the offset of any speaker that ticks late, until you hear a single tick."
     gst-launch-1.0 -q \
         audiotestsrc wave=ticks freq=880 samplesperbuffer=441 num-buffers=$((BTUI_TICKS_SECONDS * 100)) \
         ! audio/x-raw,rate=44100 ! audioconvert ! audioresample \
         ! pulsesink device="${sink}" >/dev/null 2>&1 || rc=$?
     if ((rc == 0)); then
-        job_set done "Test ticks finished."
+        job_set "done" "Test ticks finished."
     else
         echo "[pairing web UI] Test ticks on ${sink} failed (exit code ${rc})." >&2
-        job_set error "Could not play the test ticks (exit code ${rc}), see the add-on log."
+        job_set "error" "Could not play the test ticks (exit code ${rc}), see the add-on log."
     fi
 }
 
@@ -604,7 +608,12 @@ job_ticks() {
 # supplémentaire demandé.
 
 supervisor_api() {
-    local -a args=(-sS --max-time 20 -X "$1" -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}")
+    # Lit BTUI_SUPERVISOR_TOKEN (capturé par le CGI appelant juste après avoir
+    # sourcé ce fichier, voir action.cgi/status.cgi), pas SUPERVISOR_TOKEN
+    # directement : celui-ci est retiré de l'environnement dès que possible
+    # pour ne pas se retrouver hérité par bluetoothctl/pactl/jq/gst-launch-1.0,
+    # qui n'en ont aucun besoin.
+    local -a args=(-sS --max-time 20 -X "$1" -H "Authorization: Bearer ${BTUI_SUPERVISOR_TOKEN:-}")
     if [ -n "${3:-}" ]; then
         args+=(-H "Content-Type: application/json" --data "$3")
     fi

@@ -18,6 +18,13 @@ set -euo pipefail
 # shellcheck source=/dev/null
 source /opt/btui/lib/btui.sh
 
+# Retiré tout de suite : ce script ne parle jamais au Supervisor (il ne lit
+# que des fichiers locaux, voir le commentaire en tête), donc SUPERVISOR_TOKEN
+# (fourni par le Supervisor, hérité via l'environnement de httpd) n'a aucune
+# raison de rester disponible pour jq ou les autres sous-processus lancés
+# plus bas.
+unset SUPERVISOR_TOKEN
+
 require_ingress
 require_method GET
 

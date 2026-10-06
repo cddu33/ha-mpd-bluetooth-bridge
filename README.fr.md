@@ -257,6 +257,7 @@ qu'à confirmer l'ajout.
 | `enable_mpd` | Démarre ou non le serveur MPD. La connexion Bluetooth et le `media_player` natif ne sont pas affectés dans un cas comme dans l'autre ; désactivez cette option si vous ne voulez que le `media_player` natif et n'utilisez pas Music Assistant. | `true` |
 | `default_volume` | Volume (%) restauré automatiquement si le sink PulseAudio de l'enceinte est détecté muet ou à 0% (sinon reste silencieux indéfiniment, y compris après un redémarrage). N'écrase jamais un volume que vous avez choisi tant qu'il n'est pas à 0%. | `70` |
 | `renderer_volume` | Niveau de volume (tel qu'affiché par le curseur du `media_player` dans Home Assistant) auquel le `media_player` de chaque enceinte et de chaque groupe synchronisé démarre, à chaque démarrage de l'add-on ou reconnexion de l'enceinte. `100` garde l'ancien comportement (il repartait toujours à 100). À ne pas confondre avec `default_volume`, qui ne concerne que le sink PulseAudio de l'enceinte. | `100` |
+| `mpd_password` | Mot de passe optionnel que les clients MPD (ex. Music Assistant) doivent fournir pour se connecter. Laissez-le vide pour garder MPD ouvert à tout le réseau local, comme avant. Voir [Remarque sécurité](#remarque-sécurité). | *(vide)* |
 | `speaker_latency_offset_ms` | Décalage de synchro (0-500 ms) de l'enceinte principale, utilisé seulement quand elle joue dans un groupe synchronisé : augmentez-le si cette enceinte sonne en retard. Le plus simple est de le régler en direct depuis la page d'appairage, voir [Groupes synchronisés](#groupes-synchronisés). | `0` |
 | `extra_speakers` | Liste optionnelle d'enceintes supplémentaires (`mac` + `name` chacune, plus un `latency_offset_ms` facultatif, comme ci-dessus), ajoutables directement depuis l'onglet Configuration. Voir [Plusieurs enceintes](#plusieurs-enceintes). | *(vide)* |
 | `sync_groups` | Liste optionnelle de groupes synchronisés (`name` + `speakers` : les adresses MAC d'au moins deux enceintes configurées, séparées par des virgules). Voir [Groupes synchronisés](#groupes-synchronisés). | *(vide)* |
@@ -437,12 +438,17 @@ négatif) via une issue est le bienvenu.
 
 Au-delà de l'accès `host_network` déjà couvert
 [plus haut](#accès-réseau-host_network-à-lire-avant-dinstaller), le
-serveur MPD lui-même (si `enable_mpd` est activé) n'a aucune
+serveur MPD lui-même (si `enable_mpd` est activé) n'a par défaut aucune
 authentification et est accessible depuis votre réseau local (pas depuis
 Internet, sauf si vous l'avez vous-même exposé). C'est volontaire pour
 garder l'installation simple, en partant du principe que votre réseau
 Home Assistant est déjà de confiance. N'exposez pas ce port vers
 l'extérieur sans ajouter vos propres protections devant.
+
+Si vous préférez exiger un mot de passe, renseignez `mpd_password` :
+n'importe quel client MPD (Music Assistant compris, dans le champ mot de
+passe de son propre fournisseur MPD) devra alors le fournir pour se
+connecter. Laissez-le vide pour garder le comportement précédent.
 
 La page d'appairage n'est accessible qu'à travers l'ingress de Home
 Assistant, donc derrière votre connexion Home Assistant, et uniquement
@@ -450,6 +456,19 @@ pour les administrateurs. Comme l'add-on utilise `host_network`, son
 serveur web n'écoute volontairement que sur l'adresse du réseau interne
 du Supervisor et refuse tout autre client que le proxy ingress du
 Supervisor : il n'est pas joignable depuis votre réseau local.
+
+Les groupes synchronisés créent leur sink PulseAudio combiné dans le
+serveur PulseAudio **partagé** de l'hôte, hors du conteneur de l'add-on ;
+l'add-on le nettoie à chaque démarrage (y compris un simple redémarrage)
+et, depuis 2.7.0, aussi à l'arrêt ou à la désinstallation — *sauf* quand
+`enable_mpd` est actif, où c'est MPD lui-même (pas ce script) qui devient
+le processus principal du conteneur, et ne peut pas faire ce nettoyage à
+sa place. Dans ce cas précis, désinstaller l'add-on alors que des groupes
+synchronisés sont configurés peut laisser un sink `bab_sync_*` inerte
+jusqu'au prochain redémarrage du serveur PulseAudio de l'hôte (aucun son
+n'y transite, juste visible avec `pactl list short modules` en SSH).
+Désactiver `enable_mpd` avant de désinstaller évite ce cas ; sinon, c'est
+sans danger et se résorbe seul au prochain redémarrage de l'hôte.
 
 ## Dépannage
 

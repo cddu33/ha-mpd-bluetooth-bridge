@@ -1,0 +1,23 @@
+name: ShellCheck
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check syntax (bash -n)
+        run: |
+          bash -n run.sh
+          bash -n webui/lib/btui.sh
+          bash -n webui/www/cgi-bin/action.cgi
+          bash -n webui/www/cgi-bin/status.cgi
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          severity: warning
+          scandir: "."

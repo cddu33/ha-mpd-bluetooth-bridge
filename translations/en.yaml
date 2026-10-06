@@ -38,6 +38,12 @@ configuration:
       Assistant) each speaker's and synchronized group's media_player
       starts at, every time the add-on starts or the speaker reconnects.
       100 keeps the previous behavior.
+  mpd_password:
+    name: MPD password
+    description: >-
+      Optional password MPD clients (e.g. Music Assistant) must supply to
+      connect. Leave empty to keep MPD open to anyone on your local
+      network, as before (see the Security section of the README).
   speaker_latency_offset_ms:
     name: Sync offset of the primary speaker (ms)
     description: >-

@@ -235,6 +235,7 @@ with this repository's URL pre-filled, just confirm to add it.
 | `enable_mpd` | Whether to start the MPD server. The Bluetooth connection and the native `media_player` are unaffected either way; turn this off if you only want the native `media_player` output and don't use Music Assistant. | `true` |
 | `default_volume` | Volume (%) automatically restored if the speaker's PulseAudio sink is ever found muted or at 0% (otherwise stays silent indefinitely, even across reboots). Never overrides a volume you've deliberately set as long as it isn't 0%. | `70` |
 | `renderer_volume` | Volume level (as shown by the volume slider of the `media_player` in Home Assistant) each speaker's and synchronized group's `media_player` starts at, every time the add-on starts or the speaker reconnects. `100` keeps the previous behavior (it used to start at 100 every time). Not the same as `default_volume`, which only concerns the speaker's PulseAudio sink. | `100` |
+| `mpd_password` | Optional password MPD clients (e.g. Music Assistant) must supply to connect. Leave empty to keep MPD open to anyone on your local network, as before. See [Security note](#security-note). | *(empty)* |
 | `speaker_latency_offset_ms` | Sync offset (0-500 ms) of the primary speaker, only used when it plays in a synchronized group: increase it if this speaker sounds late. Easiest to set live from the pairing page, see [Synchronized groups](#synchronized-groups). | `0` |
 | `extra_speakers` | Optional list of additional speakers (`mac` + `name` each, plus an optional `latency_offset_ms`, same as above), editable straight from the Configuration tab. See [Multiple speakers](#multiple-speakers). | *(empty)* |
 | `sync_groups` | Optional list of synchronized groups (`name` + `speakers`: the MAC addresses of at least two configured speakers, separated by commas). See [Synchronized groups](#synchronized-groups). | *(empty)* |
@@ -397,18 +398,36 @@ result, good or bad.
 
 Beyond the `host_network` access already covered
 [above](#network-access-host_network-please-read-before-installing), the
-MPD server itself (if `enable_mpd` is on) has no authentication and is
-reachable from your local network (not the internet, unless you've
-specifically exposed it). This is intentional to keep setup simple,
-matching the assumption that your Home Assistant network is already
-trusted. Don't expose this port externally without adding your own
-protections in front of it.
+MPD server itself (if `enable_mpd` is on) has no authentication by
+default and is reachable from your local network (not the internet,
+unless you've specifically exposed it). This is intentional to keep setup
+simple, matching the assumption that your Home Assistant network is
+already trusted. Don't expose this port externally without adding your
+own protections in front of it.
+
+If you'd rather require a password, set `mpd_password`: any MPD client
+(Music Assistant included, under its MPD player provider's own password
+field) will then need to supply it to connect. Leave it empty to keep the
+previous behavior.
 
 The pairing page is only reachable through Home Assistant's ingress, so
 behind your Home Assistant login, and only for administrators. Because
 the add-on uses `host_network`, its web server deliberately listens only
 on the internal Supervisor network address and rejects any client other
 than the Supervisor's ingress proxy: it isn't reachable from your LAN.
+
+Synchronized groups create their combined PulseAudio sink in the host's
+**shared** PulseAudio server, outside the add-on's own container; the
+add-on cleans these up on every start (including a plain restart) and,
+since 2.7.0, on a stop or an uninstall too — *except* while `enable_mpd`
+is on, where MPD itself (not this script) is the container's main
+process, and can't run that cleanup on its own. In that one case,
+uninstalling the add-on while synchronized groups are configured can
+leave an inert `bab_sync_*` sink behind until the host's PulseAudio
+server itself restarts (no audio routed through it, just visible in
+`pactl list short modules` over SSH). Turning `enable_mpd` off before
+uninstalling avoids this; otherwise it's harmless and self-resolves on
+the next host reboot.
 
 ## Troubleshooting
 

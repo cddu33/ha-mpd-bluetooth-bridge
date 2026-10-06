@@ -26,6 +26,20 @@ set -euo pipefail
 # shellcheck source=/dev/null
 source /opt/btui/lib/btui.sh
 
+# Capturé puis retiré de l'environnement tout de suite : httpd transmet son
+# propre environnement à ce script CGI (y compris SUPERVISOR_TOKEN, fourni
+# par le Supervisor à tout add-on), et sans ce retrait il resterait hérité
+# par chaque sous-processus lancé plus bas (bluetoothctl, pactl, jq,
+# gst-launch-1.0 pour les tics de test...) qui n'en a aucun besoin. Seul
+# supervisor_api (btui.sh) le lit encore, via BTUI_SUPERVISOR_TOKEN.
+# shellcheck disable=SC2034
+# (faux positif : "shellcheck source=/dev/null" ci-dessus, nécessaire
+# puisque /opt/btui/lib/btui.sh n'existe qu'une fois l'image construite,
+# empêche aussi shellcheck de voir que supervisor_api, dans ce fichier-là,
+# lit bien cette variable.)
+BTUI_SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
+unset SUPERVISOR_TOKEN
+
 require_ingress
 require_method POST
 read_json_body

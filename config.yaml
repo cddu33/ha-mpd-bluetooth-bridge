@@ -14,7 +14,7 @@ name: "Bluetooth Audio Bridge"
 # Ancien nom : "Bluetooth Speaker MPD Bridge" (ancien nom encore avant :
 # "MPD JBL Bridge").
 
-version: "2.6.0"
+version: "2.7.0"
 # Version de l'add-on. À incrémenter à chaque modification si on veut
 # que le Supervisor propose une "mise à jour" plus tard.
 # Bump en 2.0.0 : changement de nom/slug (rupture de compatibilité pour
@@ -53,6 +53,10 @@ version: "2.6.0"
 # **groupes synchronisés** (`sync_groups`) et du décalage de synchro par
 # enceinte (`speaker_latency_offset_ms`), développés en parallèle sur la
 # branche `feature/sync-groups`. Voir CHANGELOG pour le détail des deux.
+# Bump en 2.7.0 : option `mpd_password`, limitation d'exposition de
+# SUPERVISOR_TOKEN aux sous-processus CGI, nettoyage à l'arrêt/désinstallation
+# des sinks combinés des groupes synchronisés (quand `enable_mpd` est
+# désactivé), et nettoyage shellcheck/CI. Voir CHANGELOG.
 
 slug: "bluetooth_audio_bridge"
 # Identifiant technique unique de l'add-on (utilisé dans les URLs internes,
@@ -170,6 +174,7 @@ options:
   enable_mpd: true
   default_volume: 70
   renderer_volume: 100
+  mpd_password: ""
   speaker_latency_offset_ms: 0
   extra_speakers: []
   sync_groups: []
@@ -190,6 +195,10 @@ options:
   # additif, aucune installation existante n'est affectée tant que ce champ
   # n'est pas rempli — bluetooth_mac/speaker_name restent la "première"
   # enceinte, exactement comme avant.
+  # mpd_password vide par défaut (2.7.0) : conserve le comportement actuel
+  # (MPD accessible sans authentification sur le réseau local, voir
+  # mpd.conf.template et la section Sécurité du README) tant que
+  # l'utilisateur ne renseigne pas ce champ lui-même.
 
 schema:
   bluetooth_mac: "match(^(([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})?$)?"
@@ -238,6 +247,20 @@ schema:
   # (le "?") pour qu'une configuration existante, écrite avant l'ajout de
   # cette option, reste valide ; run.sh retombe alors sur 100. Distinct de
   # default_volume, qui ne concerne que le sink PulseAudio de l'enceinte.
+
+  mpd_password: "password?"
+  # Mot de passe exigé par MPD (voir mpd.conf.template, run.sh) pour accepter
+  # une connexion — par défaut, personne n'en a besoin (voir la section
+  # Sécurité du README : MPD n'est accessible que depuis le réseau local,
+  # pas authentifié, en échange de la simplicité). Facultatif (le "?"), pour
+  # qu'une installation existante reste valide sans y toucher ; laissé vide,
+  # rien ne change. Donne accès complet (lecture/ajout/contrôle/admin) une
+  # fois le mot de passe fourni par le client MPD : pas de rôles séparés
+  # dans cette version, pour rester simple. Les guillemets, antislashs,
+  # caractères de contrôle et "@" y sont retirés avant d'être écrits dans
+  # mpd.conf (voir run.sh, sanitize_conf_string) : les deux premiers
+  # casseraient sa syntaxe, et MPD lit lui-même le texte après le DERNIER
+  # "@" de la ligne comme la liste de permissions.
 
   speaker_latency_offset_ms: "int(0,500)"
   # Décalage de synchro (ms) de l'enceinte principale (2.5.0), utilisé

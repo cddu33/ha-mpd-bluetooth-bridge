@@ -1,4 +1,9 @@
 #!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+# (ce shebang n'est pas reconnu par shellcheck : la directive ci-dessus lui
+# dit d'analyser le reste du fichier comme du bash, sans quoi tout le
+# fichier remontait une seule erreur SC1008 "shebang non reconnu" au lieu
+# des vrais diagnostics.)
 # ============================================================
 # run.sh — Script de démarrage de l'add-on
 # ============================================================
@@ -74,6 +79,24 @@ DEFAULT_VOLUME=$(bashio::config 'default_volume')
 # est détecté muet ou à 0% (voir ensure_audio_sink, étape 4bis). Par défaut
 # 70 (voir config.yaml).
 
+MPD_PASSWORD_DIRECTIVE=""
+if bashio::config.has_value 'mpd_password'; then
+    # shellcheck disable=SC2089
+    # (faux positif : cette variable est un texte de données écrit tel
+    # quel dans mpd.conf par envsubst, pas une commande/un argument shell
+    # réinterprété plus loin — les guillemets qu'elle contient n'y sont
+    # jamais ni perdus ni ré-évalués.)
+    MPD_PASSWORD_DIRECTIVE="password \"$(sanitize_conf_string "$(bashio::config 'mpd_password')" | tr -d '@')@read,add,control,admin\""
+fi
+# Vide par défaut (mpd_password non renseigné) : aucune ligne ajoutée à
+# mpd.conf, comportement inchangé (voir mpd.conf.template, étape 3).
+# Filtrée comme SPEAKER_NAME ci-dessous (sanitize_conf_string) avant
+# d'être écrite dans mpd.conf, PLUS le "@" retiré en plus : MPD lit le
+# texte après le DERNIER "@" de la ligne comme la liste de permissions
+# (ici "read,add,control,admin", accès complet, pas de rôles séparés dans
+# cette version) — un "@" laissé dans le mot de passe lui-même romprait
+# ce découpage.
+
 RENDERER_VOLUME=100
 if bashio::config.has_value 'renderer_volume'; then
     RENDERER_VOLUME=$(bashio::config 'renderer_volume')
@@ -123,6 +146,15 @@ else
     # exactement comme avant pour une enceinte déjà configurée.
     bashio::log.error "Could not read the ingress address/port from the Supervisor: pairing web UI not started." || true
 fi
+
+# httpd a déjà été lancé (ou non) ci-dessus avec SUPERVISOR_TOKEN dans son
+# environnement : c'est ce qui permet à chaque CGI qu'il lance par requête
+# de parler au Supervisor (voir action.cgi, qui le capture puis le retire
+# à son tour). Ce script-ci, en revanche, n'appelle jamais l'API du
+# Supervisor lui-même : on le retire donc maintenant de SON environnement,
+# pour qu'il n'atterrisse pas, sans raison, dans celui de bluetoothctl,
+# pactl, gmediarender ou mpd lancés plus loin.
+unset SUPERVISOR_TOKEN
 
 # --- 1quater. Mode configuration (aucune enceinte choisie, 2.4.0) ---
 # bluetooth_mac peut désormais rester vide (voir schema dans config.yaml) :
@@ -338,25 +370,31 @@ done
 # la page d'appairage.
 
 BLUETOOTH_SINK=$(sink_for_mac "${BT_MAC}")
-BLUETOOTH_CARD=$(card_for_mac "${BT_MAC}")
-# Ces deux variables restent celles de la PREMIÈRE enceinte uniquement :
-# c'est ce que MPD utilise (étape 3), et MPD ne gère qu'une seule enceinte
-# dans cette version (voir schema de extra_speakers dans config.yaml pour
-# le détail de ce choix).
+# Reste celui de la PREMIÈRE enceinte uniquement : c'est ce que MPD utilise
+# (étape 3), et MPD ne gère qu'une seule enceinte dans cette version (voir
+# schema de extra_speakers dans config.yaml pour le détail de ce choix).
+# Pas de BLUETOOTH_CARD équivalent : chaque appel à ensure_audio_sink
+# (étape 4bis) recalcule card_for_mac à la volée pour SA propre enceinte,
+# dans la boucle multi-enceintes — une variable globale pour la carte de la
+# première enceinte seule n'a plus d'usage depuis le passage au
+# multi-enceintes (2.3.0) et était restée sans effet (shellcheck SC2034).
 
 bashio::log.info "Computed PulseAudio sink: ${BLUETOOTH_SINK}"
 
 # --- 3. Génération du fichier mpd.conf final (si MPD activé) ---
-# On remplace ${BLUETOOTH_SINK} et ${SPEAKER_NAME} dans le modèle par les
-# vraies valeurs calculées ci-dessus, et on écrit le résultat dans
-# /etc/mpd.conf. Attention à la syntaxe : envsubst ne reconnaît QUE
-# `$VAR`/`${VAR}` (pas de `{{VAR}}` façon Jinja/Mustache — un bug de ce
-# type, avec le template utilisant {{BLUETOOTH_SINK}}, avait fait
+# On remplace ${BLUETOOTH_SINK}, ${SPEAKER_NAME} et ${MPD_PASSWORD_DIRECTIVE}
+# dans le modèle par les vraies valeurs calculées ci-dessus, et on écrit le
+# résultat dans /etc/mpd.conf. Attention à la syntaxe : envsubst ne
+# reconnaît QUE `$VAR`/`${VAR}` (pas de `{{VAR}}` façon Jinja/Mustache — un
+# bug de ce type, avec le template utilisant {{BLUETOOTH_SINK}}, avait fait
 # échouer silencieusement toute lecture audio lors du développement
 # initial : MPD tentait de se connecter à un sink qui n'existait pas).
 if bashio::var.true "${ENABLE_MPD}"; then
-    export BLUETOOTH_SINK SPEAKER_NAME
-    envsubst '${BLUETOOTH_SINK} ${SPEAKER_NAME}' < /etc/mpd.conf.template > /etc/mpd.conf
+    # shellcheck disable=SC2090
+    # (même faux positif que plus haut : envsubst lit MPD_PASSWORD_DIRECTIVE
+    # comme du texte brut, pas comme une commande shell à reconstruire.)
+    export BLUETOOTH_SINK SPEAKER_NAME MPD_PASSWORD_DIRECTIVE
+    envsubst '${BLUETOOTH_SINK} ${SPEAKER_NAME} ${MPD_PASSWORD_DIRECTIVE}' < /etc/mpd.conf.template > /etc/mpd.conf
     bashio::log.info "/etc/mpd.conf generated."
 else
     bashio::log.info "enable_mpd is false: skipping mpd.conf generation."
@@ -539,6 +577,22 @@ unload_stale_sync_groups() {
         pactl unload-module "${module}" 2>/dev/null || true
     done
 }
+
+# Piège sur arrêt (2.7.0) : décharge les sinks combinés si l'add-on est
+# arrêté ou désinstallé PENDANT cette phase de démarrage (Bluetooth en
+# cours de connexion, page d'appairage seule en mode configuration...).
+# Docker envoie SIGTERM dans les trois cas (stop, redémarrage,
+# désinstallation) ; sans ce piège, les sinks "bab_sync_*" déjà chargés à
+# ce stade resteraient dans le serveur PulseAudio PARTAGÉ de l'hôte
+# jusqu'à son propre redémarrage (inertes, mais visibles avec
+# `pactl list short modules`). Ce piège ne couvre PAS un arrêt survenant
+# une fois MPD lancé (étape 6) : "exec" y remplace ce script par le
+# processus MPD lui-même, qui ne connaît rien de nos sinks et ne peut pas
+# hériter ce piège — voir la note dans cette étape, et la section Sécurité
+# du README pour la limite documentée (sinon activer enable_mpd à false,
+# couvert par la boucle d'attente de l'étape 6, qui garde ce piège actif
+# en permanence).
+trap 'unload_stale_sync_groups; exit 0' TERM INT
 
 # ensure_sync_group <indice> — crée le sink combiné du groupe s'il manque,
 # ou le recharge si un membre absent lors du chargement est apparu depuis
@@ -878,10 +932,33 @@ if bashio::var.true "${ENABLE_MPD}"; then
     # MPD de se détacher en arrière-plan, ce qui est nécessaire pour rester
     # le processus principal du conteneur au lieu de le laisser croire
     # que le conteneur s'est arrêté.
+    # "exec" efface aussi le piège posé plus haut (sur TERM/INT) : MPD ne
+    # décharge donc pas les sinks combinés des groupes synchronisés à son
+    # arrêt. Changer cela impliquerait de ne plus garder MPD comme
+    # processus principal (par ex. le lancer en tâche de fond puis
+    # attendre sa fin ici) — trop risqué pour la détection de plantage par
+    # le Supervisor pour le changer sans pouvoir tester sur du matériel
+    # réel. Limite documentée dans le README (section Sécurité) : avec
+    # enable_mpd actif, désinstaller l'add-on alors que des sync_groups
+    # sont configurés peut laisser un sink "bab_sync_*" inerte jusqu'au
+    # prochain redémarrage du serveur PulseAudio partagé de l'hôte.
 else
     bashio::log.info "enable_mpd is false: MPD not started, keeping the container alive for the Bluetooth connection and the native media_player (gmediarender, étape 5bis)."
-    exec tail -f /dev/null
-    # Garde un processus au premier plan sans rien faire : la boucle de
-    # surveillance Bluetooth (étape 5) et gmediarender (étape 5bis)
-    # continuent de tourner en tâche de fond dans les deux cas.
+    # Pas de "exec tail -f /dev/null" (avant 2.7.0) : on reste nous-mêmes
+    # le processus principal du conteneur, ce qui garde actif le piège posé
+    # plus haut (sur TERM/INT) pour toute la durée de vie de l'add-on, pas
+    # seulement pendant son démarrage — contrairement au cas MPD ci-dessus,
+    # "tail" ne représentait la santé de rien de précis que le Supervisor
+    # aurait besoin de surveiller, ce changement ne retire donc aucune
+    # détection de plantage. "sleep" mis en arrière-plan puis attendu
+    # (plutôt qu'au premier plan) : un piège bash n'est garanti de
+    # s'exécuter immédiatement que pendant un "wait", pas forcément pendant
+    # une commande externe au premier plan. La boucle de surveillance
+    # Bluetooth (étape 5) et gmediarender (étape 5bis) continuent de
+    # tourner en tâche de fond comme avant.
+    trap 'unload_stale_sync_groups; exit 0' TERM INT
+    while true; do
+        sleep 3600 &
+        wait "$!"
+    done
 fi

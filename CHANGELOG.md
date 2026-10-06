@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.7.0
+- Added an optional **`mpd_password`** option: MPD clients (Music
+  Assistant included) must then supply it to connect. Leave it empty to
+  keep MPD open to the local network as before. See
+  [Security note](README.md#security-note).
+- `SUPERVISOR_TOKEN` (provided ambiently by the Supervisor to every
+  add-on) is now captured once and removed from the shell's own
+  environment right after the pairing page's web server is started (and,
+  in each CGI request, right after it's captured for the one Supervisor
+  API call that needs it), instead of staying inherited by every
+  subprocess the add-on and the pairing page spawn (`bluetoothctl`,
+  `pactl`, `jq`, `gst-launch-1.0`...) with no need for it.
+- Synchronized groups' combined PulseAudio sinks are now unloaded on
+  stop/uninstall too, not just on the next start, when `enable_mpd` is
+  off. When it's on, MPD itself (not this script) is the container's
+  main process and can't run that cleanup; see
+  [Security note](README.md#security-note) for that one remaining case.
+- Added a ShellCheck GitHub Actions workflow, and fixed the few findings
+  it could cleanly fix (an unrecognized shebang, a handful of `job_set
+  done "..."` calls shellcheck misread as the `done` keyword, and a
+  genuinely unused `BLUETOOTH_CARD` variable left over from before
+  multi-speaker support).
+
 ## 2.6.0
 - Synchronized the `feature/sync-groups` branch with `master` (2.4.1 and
   2.4.2 below, developed in parallel) and extended their per-speaker DLNA
