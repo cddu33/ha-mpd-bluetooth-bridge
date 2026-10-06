@@ -1,5 +1,84 @@
 # Changelog
 
+## 2.7.0
+- Added an optional **`mpd_password`** option: MPD clients (Music
+  Assistant included) must then supply it to connect. Leave it empty to
+  keep MPD open to the local network as before. See
+  [Security note](README.md#security-note).
+- `SUPERVISOR_TOKEN` (provided ambiently by the Supervisor to every
+  add-on) is now captured once and removed from the shell's own
+  environment right after the pairing page's web server is started (and,
+  in each CGI request, right after it's captured for the one Supervisor
+  API call that needs it), instead of staying inherited by every
+  subprocess the add-on and the pairing page spawn (`bluetoothctl`,
+  `pactl`, `jq`, `gst-launch-1.0`...) with no need for it.
+- Synchronized groups' combined PulseAudio sinks are now unloaded on
+  stop/uninstall too, not just on the next start, when `enable_mpd` is
+  off. When it's on, MPD itself (not this script) is the container's
+  main process and can't run that cleanup; see
+  [Security note](README.md#security-note) for that one remaining case.
+- Added a ShellCheck GitHub Actions workflow, and fixed the few findings
+  it could cleanly fix (an unrecognized shebang, a handful of `job_set
+  done "..."` calls shellcheck misread as the `done` keyword, and a
+  genuinely unused `BLUETOOTH_CARD` variable left over from before
+  multi-speaker support).
+
+## 2.6.0
+- Synchronized the `feature/sync-groups` branch with `master` (2.4.1 and
+  2.4.2 below, developed in parallel) and extended their per-speaker DLNA
+  port pinning and `renderer_volume` starting-volume handling to
+  **synchronized groups** as well, so a group's `media_player` gets the
+  same stable port and starting-volume behavior as an individual speaker.
+- Fixed `sink_for_mac`/`card_for_mac` not uppercasing the MAC address
+  before deriving the PulseAudio sink/card name. `bluetooth_mac` and
+  `extra_speakers[].mac` accept lowercase hex, but PulseAudio's Bluetooth
+  sink/card names are always uppercase: a lowercase MAC silently pointed
+  MPD, `gmediarender` and the self-healing sink/volume checks at a sink
+  that never existed, with no audio and no visible error.
+- Fixed `speaker_name` being written into `/etc/mpd.conf` unescaped. The
+  pairing page already rejects quotes and control characters in a name,
+  but a name set directly from the Configuration tab did not go through
+  that check, and a `"` or a newline in it could corrupt `mpd.conf` (MPD
+  failing to start) or inject extra config lines.
+- Fixed a lost-update race in the pairing page's device list: two
+  concurrent requests (e.g. two "forget" actions) could each read the
+  device list before the other's write landed, and the second write
+  would silently discard the first.
+- `add_group` now rejects a `macs` list containing a non-string entry
+  (number, boolean, object) with a `400` error instead of silently
+  dropping it.
+
+## 2.5.0
+- Added **synchronized groups**: a new `sync_groups` option, and a
+  *Synchronized groups* section on the pairing page, group two or more
+  configured speakers so they play the same audio in sync. Each group
+  shows up as one more native `media_player` in Home Assistant, and in
+  Music Assistant through its DLNA provider. Synchronization happens
+  inside the add-on, in a PulseAudio combined sink (`module-combine-sink`)
+  that keeps the speakers aligned and corrects clock drift between them:
+  neither DLNA nor MPD can synchronize separate players on the Music
+  Assistant side, and its "universal groups" aren't synchronized. A
+  speaker that drops out rejoins its group by itself once reconnected.
+  See [Synchronized groups](README.md#synchronized-groups).
+- Added a per-speaker **sync offset** (`speaker_latency_offset_ms`, and
+  `latency_offset_ms` in `extra_speakers`, 0-500 ms) for speakers that
+  add their own internal delay. It's adjusted live from the pairing page
+  while **test ticks** play on the group, without restarting the add-on.
+- Groups go to standby by themselves when nothing is playing. HAOS's
+  shared PulseAudio server doesn't load `module-suspend-on-idle`, so a
+  combined sink would otherwise stream silence to its speakers forever
+  (constant CPU and Bluetooth radio load, speakers never going to sleep).
+  Only the add-on's own group sinks are touched.
+- Music Assistant: extra speakers and groups are reached through its
+  **DLNA** provider; MPD still covers the primary speaker only. One MPD
+  instance per speaker was considered and dropped: Music Assistant creates
+  one player per MPD server, so it would have added nothing over DLNA.
+- The pairing page now asks the Supervisor for the add-on's current
+  options before changing them, since sync offsets are saved without a
+  restart.
+- Added `gstreamer-tools` to the image (`gst-launch-1.0`, for the test
+  ticks).
+
 ## 2.4.2
 - Added a **`renderer_volume`** option (1-100, default `100`) setting the
   volume level each speaker's `media_player` starts at, as shown by its

@@ -28,11 +28,15 @@ port                "6600"
 # Doit correspondre exactement au port déclaré dans config.yaml,
 # sinon Music Assistant ne pourra pas se connecter.
 
-# --- Pas de mot de passe ---
-# L'add-on n'est accessible que depuis le réseau local (pas exposé sur
-# Internet par défaut), donc pas d'authentification MPD pour rester
-# simple. À reconsidérer si jamais l'instance devient accessible depuis
-# l'extérieur (voir section Sécurité du README).
+# --- Mot de passe (optionnel) ---
+# Vide par défaut : l'add-on n'est accessible que depuis le réseau local
+# (pas exposé sur Internet par défaut), donc pas d'authentification MPD
+# par défaut, pour rester simple (voir section Sécurité du README).
+# ${MPD_PASSWORD_DIRECTIVE} est remplacé par run.sh (via envsubst) : soit
+# par rien (mpd_password vide, comportement ci-dessus inchangé), soit par
+# une directive "password "...@read,add,control,admin"" complète si
+# l'utilisateur a renseigné l'option mpd_password.
+${MPD_PASSWORD_DIRECTIVE}
 
 # --- Sortie audio : c'est la partie qui nous intéresse ---
 audio_output {

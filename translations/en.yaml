@@ -35,13 +35,33 @@ configuration:
     name: Starting volume of the media_player (%)
     description: >-
       Volume level (as shown by the media_player's slider in Home
-      Assistant) each speaker's media_player starts at, every time the
-      add-on starts or the speaker reconnects. 100 keeps the previous
-      behavior.
+      Assistant) each speaker's and synchronized group's media_player
+      starts at, every time the add-on starts or the speaker reconnects.
+      100 keeps the previous behavior.
+  mpd_password:
+    name: MPD password
+    description: >-
+      Optional password MPD clients (e.g. Music Assistant) must supply to
+      connect. Leave empty to keep MPD open to anyone on your local
+      network, as before (see the Security section of the README).
+  speaker_latency_offset_ms:
+    name: Sync offset of the primary speaker (ms)
+    description: >-
+      Only used in synchronized groups. Increase it if this speaker sounds
+      late compared to the others (0-500 ms). Easiest to adjust live from
+      the "Bluetooth Audio" panel, while playing its test ticks.
   extra_speakers:
     name: Extra speakers
     description: >-
-      Optional additional Bluetooth speakers (MAC address and name each),
-      each with its own native media_player. Can also be added from the
-      "Bluetooth Audio" panel after pairing. MPD stays on the primary
-      speaker only.
+      Optional additional Bluetooth speakers (MAC address and name each,
+      plus an optional sync offset in ms, see above), each with its own
+      native media_player. Can also be added from the "Bluetooth Audio"
+      panel after pairing. In Music Assistant, use its DLNA provider to
+      reach them: MPD stays on the primary speaker only.
+  sync_groups:
+    name: Synchronized groups
+    description: >-
+      Optional groups of speakers that play the same audio in sync, each
+      exposed as one more native media_player. A name, plus the MAC
+      addresses of at least two configured speakers separated by commas.
+      Easiest to create from the "Bluetooth Audio" panel.
