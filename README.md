@@ -36,8 +36,9 @@ original MPD bridge available as an optional second output.
   speaker's MAC address, connects the speaker via `bluetoothctl`, then
   starts MPD. Music Assistant's "MPD Players" provider connects to it
   over the standard MPD protocol port (`6600/tcp`).
-- **Pairing page** (Home Assistant ingress, **Bluetooth Audio** panel in
-  the sidebar): a small web page served by busybox `httpd`, with shell
+- **Pairing page** (Home Assistant ingress, opened with **Open Web UI** or
+  from an optional **Bluetooth Audio** sidebar panel): a small web page
+  served by busybox `httpd`, with shell
   scripts calling `bluetoothctl`. It scans for Bluetooth Classic audio
   devices, pairs and trusts them, and writes the speaker you pick into
   the add-on's own configuration through the Supervisor API.
@@ -94,9 +95,11 @@ Do this once per speaker, straight from the add-on's own pairing page.
 below). On a first install, leave `bluetooth_mac` empty: the add-on then
 starts in *setup mode*, with only its pairing page running.
 
-**2. Open the pairing page.** Click **Bluetooth Audio** in the Home
-Assistant sidebar, or **Open Web UI** on the add-on's Info tab. It's only
-available to Home Assistant administrators.
+**2. Open the pairing page.** On the add-on's **Info** tab, click
+**Open Web UI**. To get a **Bluetooth Audio** shortcut in the Home
+Assistant sidebar instead, turn on **Show in sidebar** on that same tab:
+it's off by default. The page is only available to Home Assistant
+administrators.
 
 **3. Put your speaker into pairing mode.**
 This varies by speaker model, usually holding the power or Bluetooth
@@ -231,6 +234,7 @@ with this repository's URL pre-filled, just confirm to add it.
 | `reconnect_interval` | Seconds between Bluetooth connection checks (10-300). | `30` |
 | `enable_mpd` | Whether to start the MPD server. The Bluetooth connection and the native `media_player` are unaffected either way; turn this off if you only want the native `media_player` output and don't use Music Assistant. | `true` |
 | `default_volume` | Volume (%) automatically restored if the speaker's PulseAudio sink is ever found muted or at 0% (otherwise stays silent indefinitely, even across reboots). Never overrides a volume you've deliberately set as long as it isn't 0%. | `70` |
+| `renderer_volume` | Volume level (as shown by the volume slider of the `media_player` in Home Assistant) each speaker's and synchronized group's `media_player` starts at, every time the add-on starts or the speaker reconnects. `100` keeps the previous behavior (it used to start at 100 every time). Not the same as `default_volume`, which only concerns the speaker's PulseAudio sink. | `100` |
 | `speaker_latency_offset_ms` | Sync offset (0-500 ms) of the primary speaker, only used when it plays in a synchronized group: increase it if this speaker sounds late. Easiest to set live from the pairing page, see [Synchronized groups](#synchronized-groups). | `0` |
 | `extra_speakers` | Optional list of additional speakers (`mac` + `name` each, plus an optional `latency_offset_ms`, same as above), editable straight from the Configuration tab. See [Multiple speakers](#multiple-speakers). | *(empty)* |
 | `sync_groups` | Optional list of synchronized groups (`name` + `speakers`: the MAC addresses of at least two configured speakers, separated by commas). See [Synchronized groups](#synchronized-groups). | *(empty)* |
@@ -247,6 +251,13 @@ Once the entity exists, you can send audio to it like any other
 `media_player`: from the media player card, a script, or an automation
 using the `tts.speak` or `media_player.play_media` service with
 `media_player_entity_id` targeting this entity.
+
+The entity reflects the speaker's actual Bluetooth connection: it goes
+**unavailable** while the speaker is disconnected, instead of staying
+"idle" as if nothing was wrong, and comes back once it reconnects. This
+only applies to this native `media_player`; the optional MPD output
+doesn't have an equivalent, since MPD is the add-on's main process and
+can't be stopped and restarted the same way.
 
 ## Multiple speakers
 
@@ -283,6 +294,13 @@ correct name (`speaker_name` for the primary speaker, or the `name` you
 set in `extra_speakers`). If Music Assistant confuses two players, rename
 them directly there: **Music Assistant → Settings → Players → pick the
 player → the pencil icon** next to its name.
+
+**Changing the primary speaker moves its entity.** The primary speaker's
+native `media_player` always listens on port 49494, and Home Assistant
+ties the entity to that address. If you set another speaker as primary,
+the existing entity switches to that speaker and can take its name.
+Extra speakers each listen on a fixed port derived from their MAC
+address, so their entities stay with them however the list is ordered.
 
 If you add a speaker while the add-on is already running and its
 `media_player` entity doesn't show up after a few minutes, try a full
@@ -415,6 +433,11 @@ than the Supervisor's ingress proxy: it isn't reachable from your LAN.
   Also check the add-on's log for a line confirming `gmediarender`
   started; if it's missing, the add-on didn't build correctly, open an
   issue with the build log.
+- **The `media_player` entity stays unavailable after the speaker has
+  reconnected**: this can take a while, or need a full **Home Assistant
+  Core restart** (Settings → System → Restart, not just the add-on), the
+  same SSDP discovery limitation as a newly added speaker's entity not
+  showing up, see [Multiple speakers](#multiple-speakers).
 - **Sound stopped after the speaker lost connection for a while (e.g. low
   battery), even though it looks reconnected now**: the add-on checks
   that the PulseAudio audio sink still exists and re-forces the
@@ -477,6 +500,8 @@ first language), were written with Claude, an AI assistant, from the
 very first commit. Only a couple of commits explicitly carry a
 `Co-Authored-By` line for it; the habit of adding that line came later
 and wasn't applied retroactively to the rest of the history.
+The pairing page is the exception: it was contributed by cddu33, see
+[Contributors](#contributors).
 
 ## Disclaimer
 
@@ -500,6 +525,11 @@ If this add-on has been useful to you, you can support its development:
 ## Author
 
 [dcybeldesign](https://github.com/dcybeldesign)
+
+## Contributors
+
+- [cddu33](https://github.com/cddu33): the pairing page
+  ([#4](https://github.com/dcybeldesign/ha-mpd-bluetooth-bridge/pull/4))
 
 ## License
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.6.0
+- Synchronized the `feature/sync-groups` branch with `master` (2.4.1 and
+  2.4.2 below, developed in parallel) and extended their per-speaker DLNA
+  port pinning and `renderer_volume` starting-volume handling to
+  **synchronized groups** as well, so a group's `media_player` gets the
+  same stable port and starting-volume behavior as an individual speaker.
+- Fixed `sink_for_mac`/`card_for_mac` not uppercasing the MAC address
+  before deriving the PulseAudio sink/card name. `bluetooth_mac` and
+  `extra_speakers[].mac` accept lowercase hex, but PulseAudio's Bluetooth
+  sink/card names are always uppercase: a lowercase MAC silently pointed
+  MPD, `gmediarender` and the self-healing sink/volume checks at a sink
+  that never existed, with no audio and no visible error.
+- Fixed `speaker_name` being written into `/etc/mpd.conf` unescaped. The
+  pairing page already rejects quotes and control characters in a name,
+  but a name set directly from the Configuration tab did not go through
+  that check, and a `"` or a newline in it could corrupt `mpd.conf` (MPD
+  failing to start) or inject extra config lines.
+- Fixed a lost-update race in the pairing page's device list: two
+  concurrent requests (e.g. two "forget" actions) could each read the
+  device list before the other's write landed, and the second write
+  would silently discard the first.
+- `add_group` now rejects a `macs` list containing a non-string entry
+  (number, boolean, object) with a `400` error instead of silently
+  dropping it.
+
 ## 2.5.0
 - Added **synchronized groups**: a new `sync_groups` option, and a
   *Synchronized groups* section on the pairing page, group two or more
@@ -31,16 +56,49 @@
 - Added `gstreamer-tools` to the image (`gst-launch-1.0`, for the test
   ticks).
 
+## 2.4.2
+- Added a **`renderer_volume`** option (1-100, default `100`) setting the
+  volume level each speaker's `media_player` starts at, as shown by its
+  volume slider in Home Assistant. Since 2.4.1 the renderer is restarted
+  every time a speaker reconnects, and it always came back at 100%, so a
+  volume you had lowered jumped back up each time the speaker was
+  switched off and on again. Set it to the level you want (for example
+  `50`) and the `media_player` now starts there on every start and
+  reconnect. The default of `100` keeps the previous behavior, so nothing
+  changes unless you set it. It is separate from `default_volume`, which
+  still only concerns the speaker's PulseAudio sink. Reported in
+  [#9](https://github.com/dcybeldesign/ha-mpd-bluetooth-bridge/issues/9).
+
+## 2.4.1
+- Fixed the native `media_player` entity staying "available" in Home
+  Assistant even after its speaker disconnected. The DLNA renderer used
+  to keep running regardless of the Bluetooth connection, so Home
+  Assistant kept seeing a device that answered, just with nothing to
+  play. Each speaker's renderer now stops as soon as a disconnect is
+  detected and restarts once the speaker reconnects, so the entity
+  reflects the real connection state. This only covers the native
+  `media_player` (DLNA); the optional MPD server is the add-on's main
+  process and can't be stopped the same way without stopping the add-on
+  itself. Reported in
+  [#6](https://github.com/dcybeldesign/ha-mpd-bluetooth-bridge/issues/6).
+- Going back to "available" after a reconnect can be slow, or need a
+  full Home Assistant **Core** restart, the same discovery limitation
+  already described for a newly added speaker, see
+  [Multiple speakers](README.md#multiple-speakers).
+
 ## 2.4.0
-- Added a **pairing page**, opened from a new **Bluetooth Audio** panel in
-  the Home Assistant sidebar (ingress, administrators only): scan for
-  nearby Bluetooth Classic audio devices, pair, trust and connect a
-  speaker, then set it as the primary speaker or add it as an extra one.
-  The add-on writes it into its own configuration through the Supervisor
+- Added a **pairing page**, contributed by [@cddu33](https://github.com/cddu33)
+  in [#4](https://github.com/dcybeldesign/ha-mpd-bluetooth-bridge/pull/4)
+  (ingress, administrators only): scan for nearby Bluetooth Classic audio
+  devices, pair, trust and connect a speaker, then set it as the primary
+  speaker or add it as an extra one. Open it with **Open Web UI** on the
+  add-on's Info tab, or turn on **Show in sidebar** there to get a
+  **Bluetooth Audio** panel in the sidebar. The add-on writes the chosen
+  speaker into its own configuration through the Supervisor
   API and restarts by itself. First-time setup no longer needs the
   Terminal & SSH add-on and a `bluetoothctl` session; that manual
   procedure stays documented as a fallback, for speakers that ask for a
-  PIN code — see [Pairing your speaker](README.md#pairing-your-speaker-first-time-setup).
+  PIN code, see [Pairing your speaker](README.md#pairing-your-speaker-first-time-setup).
 - `bluetooth_mac` can now be left empty: the add-on then starts in setup
   mode (pairing page only, no MPD or `media_player` yet) instead of
   failing config validation.
@@ -50,6 +108,22 @@
   unauthenticated, from the whole LAN. No additional Supervisor API
   permission is requested (`hassio_api` stays off).
 - Added the missing `extra_speakers` description to the Configuration tab.
+- Fixed the monitoring loop reporting a connected speaker as disconnected
+  every ~30 seconds, then retrying a connection that could only fail. The
+  `bluetoothctl` and `pactl` outputs are now captured before being
+  searched: piping them into `grep -q` under `pipefail` could make a
+  line that was there read as missing.
+- Each speaker's native `media_player` now listens on a fixed port: the
+  primary speaker always on 49494, as before in practice, and each extra
+  speaker on a port derived from its MAC address. Until now, the port
+  went to whichever speaker started first, so after a restart with
+  several speakers a Home Assistant entity could end up on the wrong
+  speaker. Changing the primary speaker still moves the primary entity to
+  the new primary speaker, see
+  [Multiple speakers](README.md#multiple-speakers). When updating from
+  2.3.0, each extra speaker moves to its new port once; its existing
+  `media_player` entity follows it on its own, with nothing to
+  reconfigure.
 
 ## 2.3.0
 - Added multi-speaker support

@@ -14,7 +14,7 @@ name: "Bluetooth Audio Bridge"
 # Ancien nom : "Bluetooth Speaker MPD Bridge" (ancien nom encore avant :
 # "MPD JBL Bridge").
 
-version: "2.5.0"
+version: "2.6.0"
 # Version de l'add-on. À incrémenter à chaque modification si on veut
 # que le Supervisor propose une "mise à jour" plus tard.
 # Bump en 2.0.0 : changement de nom/slug (rupture de compatibilité pour
@@ -34,6 +34,25 @@ version: "2.5.0"
 # Bump en 2.4.0 (2026-09-12) : page d'appairage Bluetooth intégrée à Home
 # Assistant (ingress, voir la section "Page d'appairage" plus bas et le
 # CHANGELOG) — plus besoin de terminal pour le premier appairage.
+# Bump en 2.4.1 (2026-09-14) : le media_player natif (DLNA) de chaque
+# enceinte passe désormais "indisponible" quand elle se déconnecte, au
+# lieu de rester affiché à tort comme disponible (voir CHANGELOG, réponse
+# à la GitHub issue #6). Testé sur la branche `fix/issue-6-dlna-availability`
+# avant merge dans master, en deux passages : une enceinte seule (JBL),
+# puis deux enceintes (JBL + JZ-B5W2) pour vérifier qu'elles restent bien
+# indépendantes l'une de l'autre.
+# Bump en 2.4.2 (2026-10-05) : nouvelle option `renderer_volume` (100 par
+# défaut, donc aucun changement sans action de l'utilisateur) pour que le
+# volume du media_player ne reparte plus à 100 à chaque reconnexion de
+# l'enceinte (voir CHANGELOG, réponse à la GitHub issue #9). Testé sur la
+# branche `fix/issue-9-initial-volume` avant merge dans master : JZ-B5W2,
+# valeur par défaut (inchangée) puis `renderer_volume` à 50 avec cycle de
+# déconnexion/reconnexion.
+# Bump en 2.6.0 : synchronisation avec master (renderer_volume, correctif
+# pipefail et port DLNA fixe par enceinte, ci-dessus) et ajout des
+# **groupes synchronisés** (`sync_groups`) et du décalage de synchro par
+# enceinte (`speaker_latency_offset_ms`), développés en parallèle sur la
+# branche `feature/sync-groups`. Voir CHANGELOG pour le détail des deux.
 
 slug: "bluetooth_audio_bridge"
 # Identifiant technique unique de l'add-on (utilisé dans les URLs internes,
@@ -150,6 +169,7 @@ options:
   reconnect_interval: 30
   enable_mpd: true
   default_volume: 70
+  renderer_volume: 100
   speaker_latency_offset_ms: 0
   extra_speakers: []
   sync_groups: []
@@ -207,6 +227,17 @@ schema:
   # N'écrase jamais un volume choisi par l'utilisateur tant qu'il n'est pas
   # à 0% — pas de reset périodique intrusif. Minimum à 1 (pas 0) pour éviter
   # une configuration qui neutraliserait silencieusement ce correctif.
+
+  renderer_volume: "int(1,100)?"
+  # Niveau de volume (curseur du media_player dans Home Assistant) auquel
+  # le renderer DLNA de chaque enceinte (et de chaque groupe synchronisé,
+  # depuis 2.6.0) démarre, à chaque démarrage de l'add-on et à chaque
+  # reconnexion de l'enceinte (voir run.sh, RENDERER_INITIAL_DB, GitHub
+  # issue #9). Valeur par défaut 100 = ancien comportement exact (0 dB),
+  # donc aucun changement pour qui ne touche pas à cette option. Facultatif
+  # (le "?") pour qu'une configuration existante, écrite avant l'ajout de
+  # cette option, reste valide ; run.sh retombe alors sur 100. Distinct de
+  # default_volume, qui ne concerne que le sink PulseAudio de l'enceinte.
 
   speaker_latency_offset_ms: "int(0,500)"
   # Décalage de synchro (ms) de l'enceinte principale (2.5.0), utilisé

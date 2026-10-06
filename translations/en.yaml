@@ -31,6 +31,13 @@ configuration:
       ever found muted or at 0% (which otherwise stays silent
       indefinitely, even across reboots, with no visible error). Never
       overrides a volume you've deliberately set as long as it isn't 0%.
+  renderer_volume:
+    name: Starting volume of the media_player (%)
+    description: >-
+      Volume level (as shown by the media_player's slider in Home
+      Assistant) each speaker's and synchronized group's media_player
+      starts at, every time the add-on starts or the speaker reconnects.
+      100 keeps the previous behavior.
   speaker_latency_offset_ms:
     name: Sync offset of the primary speaker (ms)
     description: >-

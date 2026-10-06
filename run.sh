@@ -68,6 +68,24 @@ DEFAULT_VOLUME=$(bashio::config 'default_volume')
 # est détecté muet ou à 0% (voir ensure_audio_sink, étape 4bis). Par défaut
 # 70 (voir config.yaml).
 
+RENDERER_VOLUME=100
+if bashio::config.has_value 'renderer_volume'; then
+    RENDERER_VOLUME=$(bashio::config 'renderer_volume')
+fi
+RENDERER_INITIAL_DB=$(awk -v v="${RENDERER_VOLUME}" 'BEGIN { printf "%.2f", (v - 100) * 0.4 }')
+# Volume de départ de chaque renderer DLNA, en décibels. Sans cette option,
+# gmediarender démarre à 0 dB (curseur à 100) et, depuis 2.4.1, il est
+# relancé à chaque reconnexion de l'enceinte : le volume repartait donc à
+# 100 à chaque fois (GitHub issue #9). L'échelle UPnP de gmediarender est
+# de 0,4 dB par graduation (curseur 80 = -8 dB, mesuré sur le Pi le
+# 2026-10-04) : ce calcul place donc le curseur de Home Assistant
+# exactement sur renderer_volume. Valeur par défaut 100 = 0.00 dB, donc
+# l'ancien comportement exact : option facultative dans le schema, et
+# repli à 100 si une configuration existante ne la contient pas. Distinct
+# de default_volume (sink PulseAudio), volontairement : réutiliser
+# default_volume (70 par défaut) aurait rendu tout le monde nettement moins
+# fort après la mise à jour.
+
 # --- 1ter. Page d'appairage Bluetooth (ingress, 2.4.0) ---
 # Petit serveur web (httpd de busybox-extras) qui sert la page ouverte
 # depuis le panneau "Bluetooth Audio" de Home Assistant (voir webui/) :
@@ -252,6 +270,57 @@ write_groups_state() {
 }
 write_groups_state || bashio::log.warning "Could not write the sync groups state for the pairing web UI." || true
 
+# --- 1sexies. Pré-calcul de l'UUID et du port DLNA de chaque enceinte et
+# de chaque groupe synchronisé (2.4.1, étendu aux groupes en 2.6.0) ---
+# Fait une seule fois ici, dans l'ordre des enceintes puis des groupes,
+# plutôt que dans la boucle de démarrage du renderer (ancienne étape 5bis) :
+# depuis cette version, c'est monitor_speaker (étape 5) qui démarre/arrête/
+# relance le renderer de SA PROPRE enceinte (voir issue #6 — l'entité
+# media_player restait "disponible" alors que l'enceinte était éteinte,
+# gmediarender continuant de répondre sur le réseau quoi qu'il arrive). Il
+# lui faut donc connaître à l'avance l'UUID et le port de son enceinte,
+# calculés une seule fois pour éviter qu'une reconnexion ne fasse changer
+# l'un ou l'autre en cours de route. Les groupes n'existaient pas encore
+# quand ce mécanisme a été introduit côté amont (ils n'ont donc jamais eu
+# de port fixe) : on leur applique ici exactement la même logique, dans le
+# même tableau used_ports, pour éviter qu'un groupe et une enceinte ne se
+# disputent un port au démarrage (même bug que l'enceinte visait à corriger).
+SPEAKERS_UUID=()
+SPEAKERS_PORT=()
+used_ports=()
+for i in "${!SPEAKERS_MAC[@]}"; do
+    mac_hash=$(echo -n "${SPEAKERS_MAC[i]}" | md5sum | cut -c1-32)
+    SPEAKERS_UUID+=("${mac_hash:0:8}-${mac_hash:8:4}-${mac_hash:12:4}-${mac_hash:16:4}-${mac_hash:20:12}")
+    if ((i == 0)); then
+        port=49494
+    else
+        port=$((49500 + 16#${mac_hash:0:4} % 10000))
+        while [[ " ${used_ports[*]} " == *" ${port} "* ]]; do
+            port=$((port + 1))
+        done
+    fi
+    used_ports+=("${port}")
+    SPEAKERS_PORT+=("${port}")
+done
+
+GROUPS_UUID=()
+GROUPS_PORT=()
+for i in "${!GROUPS_SINK[@]}"; do
+    if [ -z "${GROUPS_SINK[i]}" ]; then
+        GROUPS_UUID+=("")
+        GROUPS_PORT+=("")
+        continue
+    fi
+    group_hash=$(echo -n "sync_group:${GROUPS_NAME[i],,}" | md5sum | cut -c1-32)
+    GROUPS_UUID+=("${group_hash:0:8}-${group_hash:8:4}-${group_hash:12:4}-${group_hash:16:4}-${group_hash:20:12}")
+    port=$((49500 + 16#${group_hash:0:4} % 10000))
+    while [[ " ${used_ports[*]} " == *" ${port} "* ]]; do
+        port=$((port + 1))
+    done
+    used_ports+=("${port}")
+    GROUPS_PORT+=("${port}")
+done
+
 # --- 2. Calcul du nom du sink PulseAudio correspondant ---
 # PulseAudio nomme les sinks Bluetooth en remplaçant les ":" par des "_"
 # et en les collant au format bluez_sink.<MAC>.a2dp_sink.
@@ -330,7 +399,15 @@ ensure_audio_sink() {
     # reste une variable globale partagée entre toutes les enceintes — un
     # seul réglage de config pour toutes (voir config.yaml), pas de volume
     # par enceinte dans cette version, pour rester simple.
-    if ! pactl list short sinks 2>/dev/null | grep -q "${sink}"; then
+    # Sortie capturée PUIS cherchée, jamais "commande | grep -q" (2.4.0) :
+    # avec "set -o pipefail" en tête de script, grep -q s'arrête dès la
+    # première correspondance, la commande en amont peut alors être tuée par
+    # SIGPIPE en écrivant la suite de sa sortie, et tout le pipe est lu comme
+    # un échec alors que la ligne cherchée était bien là. Même règle dans
+    # monitor_speaker plus bas, et même précaution que webui/lib/btui.sh.
+    local sinks
+    sinks=$(pactl list short sinks 2>/dev/null) || true
+    if ! grep -q "${sink}" <<<"${sinks}"; then
         # Le sink attendu n'existe pas : on force le profil. Sans effet si la
         # carte PulseAudio n'a pas encore été créée par BlueZ (juste après une
         # connexion très récente) — la boucle de surveillance réessaiera au
@@ -348,7 +425,9 @@ ensure_audio_sink() {
     # (qui ne contrôle que son propre flux, voir étape 5bis) — rien dans ce
     # script ne le touchait jusqu'ici. Deux vérifications séparées :
     # `set-sink-volume` seul ne démute pas un sink déjà muet.
-    if pactl get-sink-mute "${sink}" 2>/dev/null | grep -q "^Mute: yes"; then
+    local mute
+    mute=$(pactl get-sink-mute "${sink}" 2>/dev/null) || true
+    if grep -q "^Mute: yes" <<<"${mute}"; then
         if pactl set-sink-mute "${sink}" 0 2>/dev/null; then
             bashio::log.warning "Bluetooth audio sink was muted, unmuted it."
         fi
@@ -530,13 +609,83 @@ done
 # autre côté logique applicative (la contention possible reste au niveau du
 # radio Bluetooth physique lui-même, voir vault : test du 2026-09-06).
 monitor_speaker() {
-    local mac="$1" name="$2" sink="$3" card="$4"
+    local mac="$1" name="$2" sink="$3" card="$4" uuid="$5" port="$6"
+    local info renderer_pid=""
+    # renderer_pid est une variable LOCALE à cette fonction : chaque appel de
+    # monitor_speaker tourne dans son propre processus (le "&" au moment de
+    # l'appel, plus bas), donc le renderer_pid d'une enceinte ne peut pas se
+    # mélanger avec celui d'une autre, même si le nom de la variable est le
+    # même partout.
+
+    is_connected() {
+        local i
+        i=$(bluetoothctl info "${mac}" 2>/dev/null) || true
+        grep -q "Connected: yes" <<<"${i}"
+    }
+
+    start_renderer() {
+        # Corrige la GitHub issue #6 : avant cette version, gmediarender
+        # tournait en continu quelle que soit la connexion Bluetooth, donc
+        # HA voyait toujours un renderer qui répond et gardait l'entité
+        # "disponible" même enceinte éteinte. Démarré ici (donc uniquement
+        # quand on sait l'enceinte connectée) plutôt que dans une boucle à
+        # part comme avant 2.4.1.
+        bashio::log.info "Starting the DLNA renderer for ${name} (uuid=${uuid}, port=${port})..." || true
+        gmediarender \
+            --gstout-audiosink=pulsesink \
+            --gstout-audiodevice="${sink}" \
+            --gstout-initial-volume-db="${RENDERER_INITIAL_DB}" \
+            --friendly-name="${name}" \
+            --uuid="${uuid}" \
+            --port="${port}" \
+            --logfile=stdout \
+            &
+        renderer_pid=$!
+    }
+
+    stop_renderer() {
+        # Appelé uniquement quand l'enceinte est détectée déconnectée : c'est
+        # cet arrêt qui rend le renderer injoignable et qui doit faire passer
+        # l'entité media_player à "indisponible" côté Home Assistant.
+        if [ -n "${renderer_pid}" ] && kill -0 "${renderer_pid}" 2>/dev/null; then
+            kill "${renderer_pid}" 2>/dev/null || true
+            wait "${renderer_pid}" 2>/dev/null || true
+            bashio::log.warning "Stopped the DLNA renderer for ${name} while disconnected." || true
+        fi
+        renderer_pid=""
+    }
+
+    # Démarrage initial : on vérifie l'état réel plutôt que de supposer que
+    # la connexion faite plus haut (avant le lancement de cette boucle en
+    # tâche de fond) a réussi — une enceinte éteinte au démarrage de l'add-on
+    # ne doit pas se voir attribuer un renderer qui tournerait dans le vide.
+    if is_connected; then
+        start_renderer
+    else
+        bashio::log.warning "${name} not connected at startup, DLNA renderer not started yet." || true
+    fi
+
     while true; do
         sleep "${RECONNECT_INTERVAL}"
-        if ! bluetoothctl info "${mac}" | grep -q "Connected: yes"; then
+        # Sortie capturée puis cherchée (2.4.0, voir ensure_audio_sink) : le
+        # pipe "bluetoothctl info | grep -q" sous pipefail signalait une
+        # enceinte pourtant connectée comme déconnectée toutes les ~30 s,
+        # puis relançait une connexion qui échouait forcément (constaté sur
+        # un Raspberry Pi 4 le 2026-09-12, BlueZ 5.66 de l'image Alpine 3.18).
+        if is_connected; then
+            # Reconnectée depuis le dernier passage (ou renderer mort tout
+            # seul, ex. crash de gmediarender) : le relancer.
+            if [ -z "${renderer_pid}" ] || ! kill -0 "${renderer_pid}" 2>/dev/null; then
+                start_renderer
+            fi
+        else
             bashio::log.warning "${name} disconnected, attempting to reconnect..." || true
+            stop_renderer
             connect_speaker "${mac}" "${name}" || true
             sleep 2
+            if is_connected; then
+                start_renderer
+            fi
         fi
         # Vérifié à chaque passage, pas seulement après une reconnexion :
         # le profil PulseAudio peut rester bloqué sur "off" alors que
@@ -554,7 +703,9 @@ for i in "${!SPEAKERS_MAC[@]}"; do
         "${SPEAKERS_MAC[i]}" \
         "${SPEAKERS_NAME[i]}" \
         "$(sink_for_mac "${SPEAKERS_MAC[i]}")" \
-        "$(card_for_mac "${SPEAKERS_MAC[i]}")" &
+        "$(card_for_mac "${SPEAKERS_MAC[i]}")" \
+        "${SPEAKERS_UUID[i]}" \
+        "${SPEAKERS_PORT[i]}" &
     # Le "&" final lance cette boucle en arrière-plan : le script continue
     # immédiatement à l'étape suivante sans attendre qu'elle se termine
     # (elle ne se termine jamais, c'est voulu) — une par enceinte.
@@ -649,81 +800,52 @@ if ((${#ACTIVE_GROUP_SINKS[@]} > 0)); then
     watch_sync_groups &
 fi
 
-# --- 5bis. Lancement du media_player natif (renderer DLNA/UPnP) ---
-# Tourne en tâche de fond, INDÉPENDAMMENT de ENABLE_MPD : c'est la nouvelle
-# capacité de ce projet (media_player natif, voir le vault "HA - Bluetooth
-# A2DP natif + Voice PE"). gmediarender expose l'enceinte comme un renderer
-# DLNA/UPnP ; Home Assistant le détecte automatiquement via l'intégration
-# core "dlna_dmr" (découverte réseau SSDP, aucune config manuelle côté HA).
-# Nécessite "host_network: true" dans config.yaml (voir commentaire associé)
-# pour que la découverte SSDP fonctionne.
-
-# uuid_for_key <clé> — UUID stable dérivé d'une clé (MAC d'une enceinte,
-# ou "sync_group:<nom>" pour un groupe), au format attendu par
-# gmediarender. Pourquoi un UUID dérivé : voir le commentaire dans la
-# boucle des enceintes plus bas.
-uuid_for_key() {
-    local hash
-    hash=$(echo -n "$1" | md5sum | cut -c1-32)
-    echo "${hash:0:8}-${hash:8:4}-${hash:12:4}-${hash:16:4}-${hash:20:12}"
-}
-
-# start_gmediarender <nom affiché> <sink PulseAudio> <clé d'UUID>
-# Fonction depuis 2.5.0 : même lancement pour une enceinte et pour un
-# groupe synchronisé.
+# --- 5bis. Media_player natif des groupes synchronisés (renderer DLNA/UPnP) ---
+# Depuis 2.4.1, gmediarender n'est plus démarré ici pour chaque ENCEINTE :
+# c'est monitor_speaker (étape 5, fonctions start_renderer/stop_renderer)
+# qui le démarre, l'arrête et le relance pour SA propre enceinte, selon
+# l'état réel de la connexion Bluetooth — voir la GitHub issue #6 (l'entité
+# media_player restait "disponible" côté Home Assistant même enceinte
+# éteinte, gmediarender continuant de répondre sur le réseau quoi qu'il
+# arrive). L'UUID et le port de chaque enceinte restent calculés une seule
+# fois (étape 1sexies, SPEAKERS_UUID[]/SPEAKERS_PORT[]) pour qu'ils ne
+# changent jamais en cours de route, y compris à travers plusieurs
+# déconnexions/reconnexions.
+#
+# Un GROUPE synchronisé n'a pas d'enceinte unique dont dépendre : son sink
+# combiné (étape 4ter, ensure_sync_group) s'adapte déjà aux membres présents
+# ou absents, donc son renderer reste démarré en continu ici, comme avant
+# 2.4.1 — seules les enceintes individuelles ont besoin du cycle de vie
+# géré par monitor_speaker. UUID et port de chaque groupe précalculés au
+# même endroit que ceux des enceintes (étape 1sexies, GROUPS_UUID[]/
+# GROUPS_PORT[]), avec le même volume de départ (RENDERER_INITIAL_DB).
 start_gmediarender() {
-    local uuid
-    uuid=$(uuid_for_key "$3")
-    bashio::log.info "gmediarender binary found ($(command -v gmediarender)), starting for $1 with uuid=${uuid}..."
+    local name="$1" sink="$2" uuid="$3" port="$4"
+    bashio::log.info "gmediarender binary found ($(command -v gmediarender)), starting for ${name} with uuid=${uuid} on port ${port}..."
     gmediarender \
         --gstout-audiosink=pulsesink \
-        --gstout-audiodevice="$2" \
-        --friendly-name="$1" \
+        --gstout-audiodevice="${sink}" \
+        --gstout-initial-volume-db="${RENDERER_INITIAL_DB}" \
+        --friendly-name="${name}" \
         --uuid="${uuid}" \
+        --port="${port}" \
         --logfile=stdout \
         &
 }
 
 if command -v gmediarender >/dev/null 2>&1; then
-    # Une instance PAR enceinte configurée (2.3.0, multi-enceintes) : c'est
-    # ce qui donne, côté Home Assistant, un media_player DLNA distinct et
-    # sélectionnable par enceinte — chaque instance a son propre sink
-    # PulseAudio ET son propre UUID (voir ci-dessous), donc HA ne les
-    # confond pas entre elles.
-    for i in "${!SPEAKERS_MAC[@]}"; do
-        mac="${SPEAKERS_MAC[i]}"
-        name="${SPEAKERS_NAME[i]}"
-        sink=$(sink_for_mac "${mac}")
-
-        # Sans --uuid, gmediarender retombe sur une valeur FIXE codée en dur
-        # ("GMediaRender-1_0-000-000-002"), identique pour toute installation.
-        # Découvert en testant une deuxième instance en parallèle (voir vault,
-        # "Test d'installation réelle") : Home Assistant déduplique les
-        # renderers DLNA par UUID, donc deux enceintes différentes sur deux
-        # installations de cet add-on se retrouveraient fusionnées en une
-        # seule entité media_player. On dérive ici un UUID stable à partir de
-        # la MAC de CHAQUE enceinte (même enceinte → même UUID à chaque
-        # redémarrage, enceintes différentes → UUID différents) — c'est ce
-        # même mécanisme, déjà en place avant le multi-enceintes, qui permet
-        # à plusieurs instances de coexister proprement une fois mises en
-        # boucle ici.
-        # Clé = la MAC telle que configurée, exactement comme avant 2.5.0
-        # (même calcul, déplacé dans uuid_for_key) : une enceinte garde
-        # son entité media_player existante.
-        start_gmediarender "${name}" "${sink}" "${mac}"
-    done
-
     # Une instance de plus par groupe synchronisé (2.5.0), branchée sur son
     # sink combiné (étape 4ter) : c'est ce qui donne un media_player
     # "groupe" dans Home Assistant, et un lecteur dans Music Assistant via
-    # son fournisseur DLNA. UUID dérivé du nom du groupe, préfixé pour ne
-    # jamais tomber sur celui d'une enceinte : stable d'un redémarrage à
-    # l'autre, mais un groupe renommé devient une nouvelle entité
-    # (documenté dans le README). Lancée même si aucune enceinte du groupe
-    # n'est connectée : gmediarender n'ouvre le sink qu'au moment de jouer.
+    # son fournisseur DLNA. UUID et port dérivés du nom du groupe (étape
+    # 1sexies), préfixés pour ne jamais tomber sur ceux d'une enceinte :
+    # stables d'un redémarrage à l'autre, mais un groupe renommé devient une
+    # nouvelle entité (documenté dans le README). Lancée même si aucune
+    # enceinte du groupe n'est connectée : gmediarender n'ouvre le sink
+    # qu'au moment de jouer.
     for i in "${!GROUPS_SINK[@]}"; do
         if [ -n "${GROUPS_SINK[i]}" ]; then
-            start_gmediarender "${GROUPS_NAME[i]}" "${GROUPS_SINK[i]}" "sync_group:${GROUPS_NAME[i],,}"
+            start_gmediarender "${GROUPS_NAME[i]}" "${GROUPS_SINK[i]}" "${GROUPS_UUID[i]}" "${GROUPS_PORT[i]}"
         fi
     done
 else
@@ -731,8 +853,9 @@ else
 fi
 # Garde-fou de diagnostic (2026-08-20) : le premier build de gmediarender
 # n'a produit aucune trace dans les logs (ni succès ni erreur) et HA n'a
-# détecté aucun nouveau renderer DLNA — ce bloc sert à confirmer noir sur
-# blanc si le binaire existe réellement avant de creuser plus loin.
+# détecté aucun nouveau renderer DLNA — cette vérification confirme noir sur
+# blanc si le binaire existe réellement avant de creuser plus loin, même si
+# le démarrage effectif se fait maintenant dans monitor_speaker.
 # Partage volontairement le même sink PulseAudio que MPD (si activé) :
 # PulseAudio mixe plusieurs sources sur un même sink nativement, donc les
 # deux peuvent en principe coexister sans conflit technique — à vérifier en

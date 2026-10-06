@@ -38,8 +38,9 @@ sortie secondaire optionnelle.
   génère `/etc/mpd.conf`, connecte l'enceinte via `bluetoothctl`, puis
   démarre MPD. Le fournisseur "MPD Players" de Music Assistant s'y
   connecte via le port standard du protocole MPD (`6600/tcp`).
-- **Page d'appairage** (ingress Home Assistant, panneau **Bluetooth
-  Audio** dans le menu latéral) : une petite page web servie par `httpd`
+- **Page d'appairage** (ingress Home Assistant, ouverte par **Ouvrir
+  l'interface utilisateur web** ou depuis un panneau **Bluetooth Audio**
+  facultatif dans la barre latérale) : une petite page web servie par `httpd`
   de busybox, avec des scripts shell qui pilotent `bluetoothctl`. Elle
   recherche les appareils audio Bluetooth Classic, les appaire, leur fait
   confiance, puis enregistre l'enceinte choisie dans la configuration de
@@ -103,11 +104,12 @@ ci-dessous). Lors d'une première installation, laissez `bluetooth_mac`
 vide : l'add-on démarre alors en *mode configuration*, avec uniquement sa
 page d'appairage.
 
-**2. Ouvrez la page d'appairage.** Cliquez sur **Bluetooth Audio** dans le
-menu latéral de Home Assistant, ou sur **Ouvrir l'interface web** dans
-l'onglet Info de l'add-on. Elle n'est accessible qu'aux administrateurs de
-Home Assistant. La page elle-même est en anglais, comme les journaux de
-l'add-on.
+**2. Ouvrez la page d'appairage.** Dans l'onglet **Info** de l'add-on,
+cliquez sur **Ouvrir l'interface utilisateur web**. Pour avoir plutôt un
+raccourci **Bluetooth Audio** dans la barre latérale de Home Assistant,
+activez **Afficher dans la barre latérale** dans ce même onglet : l'option
+est désactivée par défaut. La page n'est accessible qu'aux administrateurs
+de Home Assistant, et elle est en anglais, comme les journaux de l'add-on.
 
 **3. Mettez votre enceinte en mode appairage.**
 Ça varie selon le modèle, généralement en maintenant le bouton
@@ -254,6 +256,7 @@ qu'à confirmer l'ajout.
 | `reconnect_interval` | Secondes entre deux vérifications de la connexion Bluetooth (10-300). | `30` |
 | `enable_mpd` | Démarre ou non le serveur MPD. La connexion Bluetooth et le `media_player` natif ne sont pas affectés dans un cas comme dans l'autre ; désactivez cette option si vous ne voulez que le `media_player` natif et n'utilisez pas Music Assistant. | `true` |
 | `default_volume` | Volume (%) restauré automatiquement si le sink PulseAudio de l'enceinte est détecté muet ou à 0% (sinon reste silencieux indéfiniment, y compris après un redémarrage). N'écrase jamais un volume que vous avez choisi tant qu'il n'est pas à 0%. | `70` |
+| `renderer_volume` | Niveau de volume (tel qu'affiché par le curseur du `media_player` dans Home Assistant) auquel le `media_player` de chaque enceinte et de chaque groupe synchronisé démarre, à chaque démarrage de l'add-on ou reconnexion de l'enceinte. `100` garde l'ancien comportement (il repartait toujours à 100). À ne pas confondre avec `default_volume`, qui ne concerne que le sink PulseAudio de l'enceinte. | `100` |
 | `speaker_latency_offset_ms` | Décalage de synchro (0-500 ms) de l'enceinte principale, utilisé seulement quand elle joue dans un groupe synchronisé : augmentez-le si cette enceinte sonne en retard. Le plus simple est de le régler en direct depuis la page d'appairage, voir [Groupes synchronisés](#groupes-synchronisés). | `0` |
 | `extra_speakers` | Liste optionnelle d'enceintes supplémentaires (`mac` + `name` chacune, plus un `latency_offset_ms` facultatif, comme ci-dessus), ajoutables directement depuis l'onglet Configuration. Voir [Plusieurs enceintes](#plusieurs-enceintes). | *(vide)* |
 | `sync_groups` | Liste optionnelle de groupes synchronisés (`name` + `speakers` : les adresses MAC d'au moins deux enceintes configurées, séparées par des virgules). Voir [Groupes synchronisés](#groupes-synchronisés). | *(vide)* |
@@ -272,6 +275,14 @@ n'importe quel `media_player` : depuis la carte lecteur multimédia, un
 script, ou une automatisation utilisant le service `tts.speak` ou
 `media_player.play_media` avec `media_player_entity_id` ciblant cette
 entité.
+
+L'entité reflète l'état réel de la connexion Bluetooth de l'enceinte :
+elle passe **indisponible** pendant que l'enceinte est déconnectée, au
+lieu de rester affichée "idle" comme si de rien n'était, et revient une
+fois la reconnexion faite. Ça ne concerne que ce `media_player` natif ;
+la sortie MPD optionnelle n'a pas d'équivalent, MPD étant le processus
+principal de l'add-on, qu'on ne peut pas arrêter puis relancer de la même
+façon.
 
 ## Plusieurs enceintes
 
@@ -311,6 +322,14 @@ add-on contrôle — Home Assistant affiche déjà le bon nom de son côté
 `extra_speakers`). Si Music Assistant confond deux lecteurs, renommez-les
 directement là-bas : **Music Assistant → Paramètres → Lecteurs →
 sélectionnez le lecteur → l'icône crayon** à côté de son nom.
+
+**Changer d'enceinte principale déplace son entité.** La sortie
+`media_player` native de l'enceinte principale écoute toujours sur le
+port 49494, et Home Assistant rattache l'entité à cette adresse. Si vous
+définissez une autre enceinte comme principale, l'entité existante passe
+sur cette enceinte et peut prendre son nom. Les enceintes supplémentaires
+écoutent chacune sur un port fixe dérivé de leur adresse MAC, donc leurs
+entités restent attachées à elles quel que soit l'ordre de la liste.
 
 Si vous ajoutez une enceinte pendant que l'add-on tourne déjà et que son
 entité `media_player` n'apparaît pas au bout de quelques minutes, essayez
@@ -457,6 +476,12 @@ Supervisor : il n'est pas joignable depuis votre réseau local.
   Vérifiez aussi le journal de l'add-on pour une ligne confirmant le
   démarrage de `gmediarender` ; si elle manque, l'add-on ne s'est pas
   construit correctement, ouvrez une issue avec le journal de build.
+- **L'entité `media_player` reste indisponible après que l'enceinte s'est
+  reconnectée** : ça peut prendre du temps, ou nécessiter un redémarrage
+  complet de **HA Core** (Paramètres → Système → Redémarrer, pas
+  seulement l'add-on), la même limitation de découverte SSDP que pour
+  l'entité d'une enceinte nouvellement ajoutée qui n'apparaît pas, voir
+  [Plusieurs enceintes](#plusieurs-enceintes).
 - **Le son s'est arrêté après une perte de connexion prolongée de
   l'enceinte (batterie faible par exemple), même si elle semble
   reconnectée maintenant** : l'add-on vérifie que le sink audio
@@ -530,6 +555,8 @@ assistant IA, depuis le tout premier commit. Seuls quelques commits
 portent explicitement une ligne `Co-Authored-By` à ce titre ; l'habitude
 de l'ajouter est venue plus tard et n'a pas été appliquée rétroactivement
 au reste de l'historique.
+La page d'appairage fait exception : elle a été proposée par cddu33, voir
+[Contributeurs](#contributeurs).
 
 ## Avertissement
 
@@ -555,6 +582,11 @@ Si cet add-on vous a été utile, vous pouvez soutenir son développement :
 ## Auteur
 
 [dcybeldesign](https://github.com/dcybeldesign)
+
+## Contributeurs
+
+- [cddu33](https://github.com/cddu33) : la page d'appairage
+  ([#4](https://github.com/dcybeldesign/ha-mpd-bluetooth-bridge/pull/4))
 
 ## Licence
 
