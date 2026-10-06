@@ -40,6 +40,13 @@ BTUI_DEVICES_FILE="${BTUI_STATE_DIR}/devices.json"
 BTUI_SESSION_LOG="${BTUI_STATE_DIR}/bluetoothctl.log"
 BTUI_LOCK_DIR="${BTUI_STATE_DIR}/lock"
 
+BTUI_DEVICES_LOCK_DIR="${BTUI_STATE_DIR}/devices.lock"
+# Verrou DISTINCT de BTUI_LOCK_DIR (voir devices_update plus bas) : celui-ci
+# protège uniquement la lecture-modification-écriture de BTUI_DEVICES_FILE,
+# bien plus courte qu'un scan/appairage. Le réutiliser ferait deadlocker
+# job_pair, qui appelle devices_update alors qu'il détient déjà BTUI_LOCK_DIR
+# pour toute la durée de l'opération.
+
 BTUI_GROUPS_FILE="${BTUI_STATE_DIR}/groups.json"
 # Groupes synchronisés tels que run.sh les a réellement démarrés (2.5.0) :
 # nom, membres, sink PulseAudio — ou raison pour laquelle un groupe a été
@@ -140,6 +147,21 @@ valid_mac() {
     [[ "${1:-}" =~ ${BTUI_MAC_REGEX} ]]
 }
 
+# sanitize_conf_string <texte> — retire apostrophes, guillemets, antislash
+# et caractères de contrôle (dont les retours à la ligne) d'un texte avant
+# de l'insérer dans un fichier de configuration généré (mpd.conf via
+# envsubst) ou dans la ligne de commande d'un module PulseAudio (pactl
+# load-module ..., voir ensure_sync_group dans run.sh). Nécessaire parce
+# que ces noms (speaker_name, nom d'un groupe) ont un schema libre ("str")
+# dans config.yaml : contrairement à un nom posé depuis la page d'appairage
+# (voir require_name plus bas), rien ne les valide si l'utilisateur les
+# tape directement dans l'onglet Configuration de Home Assistant. Un "\""
+# non filtré y casserait la syntaxe de la directive générée ; un retour à
+# la ligne permettrait d'y injecter des lignes supplémentaires.
+sanitize_conf_string() {
+    printf '%s' "${1:-}" | tr -d "'\"\\\\" | tr -d '[:cntrl:]'
+}
+
 # ============================================================
 # Bluetooth (bluetoothctl)
 # ============================================================
@@ -226,13 +248,36 @@ bt_devices_json() {
 
 # devices_update <mac> — met à jour (ou retire) un appareil dans le
 # dernier résultat de scan, après un appairage ou un "forget".
+# Lecture-modification-écriture : sans verrou, deux requêtes CGI
+# concurrentes (chacune dans son propre processus httpd, ex. deux "forget"
+# sur des MAC différentes) peuvent chacune lire BTUI_DEVICES_FILE avant que
+# l'autre n'ait écrit, et la deuxième écriture efface alors silencieusement
+# la première. mkdir est atomique : même principe de verrou que job_start,
+# mais dans BTUI_DEVICES_LOCK_DIR, un répertoire dédié (voir sa déclaration)
+# pour ne pas se gêner avec le verrou de job scan/appairage/tics.
 devices_update() {
-    local entry tmp="${BTUI_DEVICES_FILE}.$$.tmp"
+    local entry tmp="${BTUI_DEVICES_FILE}.$$.tmp" tries=0
     entry=$(bt_device_json "$1")
+    while ! mkdir "${BTUI_DEVICES_LOCK_DIR}" 2>/dev/null; do
+        ((tries++))
+        if ((tries > 40)); then
+            # Verrou resté bloqué après 2s (crash d'un appel précédent en
+            # plein milieu) : on le récupère plutôt que de bloquer la page
+            # indéfiniment sur une mise à jour qui ne devrait prendre que
+            # quelques millisecondes. "|| true" : au pire (course perdue
+            # contre un autre appel qui récupère le verrou en même temps),
+            # on continue sans l'avoir obtenu plutôt que de bloquer.
+            rm -rf "${BTUI_DEVICES_LOCK_DIR}"
+            mkdir "${BTUI_DEVICES_LOCK_DIR}" 2>/dev/null || true
+            break
+        fi
+        sleep 0.05
+    done
     [ -s "${BTUI_DEVICES_FILE}" ] || echo '[]' >"${BTUI_DEVICES_FILE}"
     jq -c --argjson entry "${entry}" \
         'map(select(.mac != $entry.mac)) + (if $entry.known then [$entry] else [] end)' \
         "${BTUI_DEVICES_FILE}" >"${tmp}" && mv -f "${tmp}" "${BTUI_DEVICES_FILE}"
+    rmdir "${BTUI_DEVICES_LOCK_DIR}" 2>/dev/null || true
 }
 
 # bt_scan_session <secondes> [mac]
@@ -312,15 +357,23 @@ fi
 
 # sink_for_mac <mac> / card_for_mac <mac>
 # PulseAudio nomme les sinks Bluetooth en remplaçant les ":" par des "_"
-# et en les collant au format bluez_sink.<MAC>.a2dp_sink.
-# Exemple : AA:BB:CC:DD:EE:FF  ->  AA_BB_CC_DD_EE_FF
+# et en les collant au format bluez_sink.<MAC>.a2dp_sink, TOUJOURS en
+# majuscules (c'est ce que bluetoothctl affiche et ce que PulseAudio utilise
+# dans le nom du sink, voir action.cgi). Le schema de config.yaml autorise
+# pourtant une MAC en minuscules dans bluetooth_mac/extra_speakers[].mac : on
+# met donc en majuscules ICI, dans les deux fonctions, plutôt que de compter
+# sur chaque appelant pour le faire (certains le faisaient déjà, d'autres
+# non — un appelant qui met déjà la MAC en majuscule n'est pas affecté,
+# "${1^^}" est sans effet sur une chaîne déjà en majuscules).
 # Déplacées ici depuis run.sh en 2.5.0 (inchangées) pour servir aussi à la
 # page d'appairage.
 sink_for_mac() {
-    echo "bluez_sink.${1//:/_}.a2dp_sink"
+    local mac="${1^^}"
+    echo "bluez_sink.${mac//:/_}.a2dp_sink"
 }
 card_for_mac() {
-    echo "bluez_card.${1//:/_}"
+    local mac="${1^^}"
+    echo "bluez_card.${mac//:/_}"
 }
 
 # pulse_sink_state <sink> — RUNNING, IDLE ou SUSPENDED ; rien si le sink

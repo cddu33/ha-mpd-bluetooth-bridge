@@ -49,9 +49,15 @@ BT_MAC=$(bashio::config 'bluetooth_mac')
 # être vide depuis 2.4.0 (première installation, avant tout appairage) :
 # voir le mode configuration, étape 1quater.
 
-SPEAKER_NAME=$(bashio::config 'speaker_name')
+SPEAKER_NAME=$(sanitize_conf_string "$(bashio::config 'speaker_name')")
 # Nom cosmétique de l'enceinte, affiché côté MPD (n'affecte pas le
 # fonctionnement). Par défaut "Bluetooth Speaker" si non renseigné.
+# Filtré avec sanitize_conf_string (btui.sh) avant même d'être assigné :
+# speaker_name a le schema libre "str" dans config.yaml (contrairement à un
+# nom posé depuis la page d'appairage, voir require_name dans action.cgi),
+# et sert plus bas à envsubst pour générer mpd.conf (étape 3) — un "\"" ou
+# un retour à la ligne non filtré y casserait la directive `name "..."`
+# générée, voire y injecterait des lignes de configuration.
 
 RECONNECT_INTERVAL=$(bashio::config 'reconnect_interval')
 # Intervalle (en secondes) entre deux vérifications de la connexion
@@ -574,10 +580,10 @@ ensure_sync_group() {
     fi
 
     # Nom lisible du sink (visible avec pactl) : apostrophes, guillemets et
-    # antislash retirés, ils casseraient la syntaxe des arguments du module.
-    # Le nom affiché dans Home Assistant vient de gmediarender (étape 5bis)
-    # et n'est pas concerné.
-    description=$(printf '%s' "${name}" | tr -d "'\"\\\\" | tr -d '[:cntrl:]')
+    # antislash retirés (sanitize_conf_string, btui.sh), ils casseraient la
+    # syntaxe des arguments du module. Le nom affiché dans Home Assistant
+    # vient de gmediarender (étape 5bis) et n'est pas concerné.
+    description=$(sanitize_conf_string "${name}")
     if ! pactl load-module module-combine-sink \
         "sink_name=${sink}" \
         "slaves=$(IFS=,; echo "${present[*]}")" \
@@ -610,7 +616,7 @@ done
 # radio Bluetooth physique lui-même, voir vault : test du 2026-09-06).
 monitor_speaker() {
     local mac="$1" name="$2" sink="$3" card="$4" uuid="$5" port="$6"
-    local info renderer_pid=""
+    local renderer_pid=""
     # renderer_pid est une variable LOCALE à cette fonction : chaque appel de
     # monitor_speaker tourne dans son propre processus (le "&" au moment de
     # l'appel, plus bas), donc le renderer_pid d'une enceinte ne peut pas se

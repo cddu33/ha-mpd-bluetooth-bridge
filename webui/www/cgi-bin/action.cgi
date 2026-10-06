@@ -160,6 +160,15 @@ case "${action}" in
             http_error "409 Conflict" "A group with this name already exists."
         fi
         configured=$(jq -r '[(.bluetooth_mac // ""), ((.extra_speakers // [])[] | (.mac // ""))] | map(ascii_upcase | select(. != "")) | .[]' <<<"${options}")
+        # Validé explicitement AVANT la boucle, plutôt que de compter sur le
+        # filtre "strings" de la boucle ci-dessous pour les écarter : sans
+        # ce test, un élément qui n'est pas une chaîne JSON (nombre,
+        # booléen, objet) y serait silencieusement ignoré au lieu d'être
+        # signalé, contrairement à toute autre entrée invalide de cette
+        # action.
+        if ! jq -e '(.macs // []) | (type == "array") and (all(.[]; type == "string"))' >/dev/null <<<"${BTUI_BODY}"; then
+            http_error "400 Bad Request" "Invalid Bluetooth MAC address."
+        fi
         members=()
         while read -r member; do
             member="${member^^}"
@@ -172,7 +181,7 @@ case "${action}" in
             if [[ " ${members[*]} " != *" ${member} "* ]]; then
                 members+=("${member}")
             fi
-        done < <(jq -r '(.macs // []) | if type == "array" then .[] else empty end | strings' <<<"${BTUI_BODY}")
+        done < <(jq -r '(.macs // [])[]' <<<"${BTUI_BODY}")
         if ((${#members[@]} < 2)); then
             http_error "400 Bad Request" "Pick at least two speakers for a synchronized group."
         fi
