@@ -299,6 +299,17 @@ speaker only: Music Assistant creates one player per MPD server, not per
 audio output, so a single MPD can't expose several speakers as separate
 players.
 
+**Music Assistant takes up to 5 minutes to see a speaker again** after
+an add-on restart, or after the speaker was off or disconnected: its
+`media_player` stays unavailable meanwhile. While a speaker is
+disconnected (and during a restart) its DLNA renderer is stopped, so
+that Home Assistant marks it unavailable. Home Assistant notices the
+renderer coming back right away, through the announcement it sends at
+startup. Music Assistant doesn't listen to those announcements: it only
+searches the network for DLNA renderers every 5 minutes. To see the
+speaker right away, reload the DLNA provider: **Music Assistant →
+Settings → Providers → DLNA → ⋮ → Reload**.
+
 **Music Assistant shows extra speakers with a generic or duplicate name**
 (e.g. two speakers both labeled "Bluetooth Speaker"): this is a
 naming/caching quirk in Music Assistant's own DLNA player discovery, not

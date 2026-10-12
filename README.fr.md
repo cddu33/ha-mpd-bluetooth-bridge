@@ -331,6 +331,17 @@ attaché uniquement à l'enceinte principale : Music Assistant crée un
 lecteur par serveur MPD, pas par sortie audio, donc un seul MPD ne peut
 pas exposer plusieurs enceintes comme des lecteurs distincts.
 
+**Music Assistant met jusqu'à 5 minutes à revoir une enceinte** après
+un redémarrage de l'add-on, ou après que l'enceinte a été éteinte ou
+déconnectée : son `media_player` reste indisponible pendant ce temps.
+Tant qu'une enceinte est déconnectée (et pendant un redémarrage), son
+renderer DLNA est arrêté, pour que Home Assistant la marque indisponible.
+Home Assistant voit le renderer revenir aussitôt, grâce à l'annonce qu'il
+envoie au démarrage. Music Assistant n'écoute pas ces annonces : il ne
+cherche les renderers DLNA sur le réseau que toutes les 5 minutes. Pour
+voir l'enceinte tout de suite, rechargez le fournisseur DLNA : **Music
+Assistant → Paramètres → Fournisseurs → DLNA → ⋮ → Recharger**.
+
 **Music Assistant affiche des enceintes supplémentaires avec un nom
 générique ou dupliqué** (par exemple deux enceintes toutes les deux
 nommées "Bluetooth Speaker") : c'est un souci de nommage/cache propre à
