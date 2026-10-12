@@ -41,7 +41,9 @@ original MPD bridge available as an optional second output.
   served by busybox `httpd`, with shell
   scripts calling `bluetoothctl`. It scans for Bluetooth Classic audio
   devices, pairs and trusts them, and writes the speaker you pick into
-  the add-on's own configuration through the Supervisor API.
+  the add-on's own configuration through the Supervisor API. It can
+  also forget a speaker, or pause one so another device can use it, see
+  [Letting another device use a speaker](#letting-another-device-use-a-speaker-pause).
 - **Synchronized groups** (optional): one PulseAudio combined sink per
   group feeds several speakers from a single stream, in sync, exposed as
   one more DLNA/UPnP renderer, see
@@ -99,7 +101,9 @@ starts in *setup mode*, with only its pairing page running.
 **Open Web UI**. To get a **Bluetooth Audio** shortcut in the Home
 Assistant sidebar instead, turn on **Show in sidebar** on that same tab:
 it's off by default. The page is only available to Home Assistant
-administrators.
+administrators. It is shown in English or French depending on your
+browser's language (English if yours isn't available), and adding
+`?lang=fr` or `?lang=en` to its address forces one.
 
 **3. Put your speaker into pairing mode.**
 This varies by speaker model, usually holding the power or Bluetooth
@@ -121,9 +125,17 @@ allows the add-on's automatic reconnection to work later.
 Home Assistant. The add-on saves the speaker into its own configuration
 (`bluetooth_mac` and `speaker_name`) and restarts by itself; the native
 `media_player` then shows up as described in
-[Native media_player output](#native-media_player-output-dlnaupnp). For
-another speaker, pair it the same way and click **Add as extra** instead,
+[Native media_player output](#native-media_player-output-dlnaupnp). If
+another speaker was already the primary one, it stays configured as an
+extra speaker. For another speaker, pair it the same way and click **Add as extra** instead,
 see [Multiple speakers](#multiple-speakers).
+
+**Managing your speakers later.** The **Configured speakers** section at
+the top of the page lists the speakers the add-on uses, with their
+status. **Forget** unpairs a speaker from the host (to pair it again
+from scratch, click **Pair** once it is in pairing mode again), and
+**Pause** lets another device use it for a while, see
+[Letting another device use a speaker](#letting-another-device-use-a-speaker-pause).
 
 ### Manual pairing (fallback)
 
@@ -287,6 +299,17 @@ speaker only: Music Assistant creates one player per MPD server, not per
 audio output, so a single MPD can't expose several speakers as separate
 players.
 
+**Music Assistant takes up to 5 minutes to see a speaker again** after
+an add-on restart, or after the speaker was off or disconnected: its
+`media_player` stays unavailable meanwhile. While a speaker is
+disconnected (and during a restart) its DLNA renderer is stopped, so
+that Home Assistant marks it unavailable. Home Assistant notices the
+renderer coming back right away, through the announcement it sends at
+startup. Music Assistant doesn't listen to those announcements: it only
+searches the network for DLNA renderers every 5 minutes. To see the
+speaker right away, reload the DLNA provider: **Music Assistant →
+Settings → Providers → DLNA → ⋮ → Reload**.
+
 **Music Assistant shows extra speakers with a generic or duplicate name**
 (e.g. two speakers both labeled "Bluetooth Speaker"): this is a
 naming/caching quirk in Music Assistant's own DLNA player discovery, not
@@ -302,6 +325,9 @@ ties the entity to that address. If you set another speaker as primary,
 the existing entity switches to that speaker and can take its name.
 Extra speakers each listen on a fixed port derived from their MAC
 address, so their entities stay with them however the list is ordered.
+The speaker that was primary before is not dropped: it stays configured
+as an extra speaker. If you no longer want it, remove it from
+`extra_speakers` in the add-on configuration.
 
 If you add a speaker while the add-on is already running and its
 `media_player` entity doesn't show up after a few minutes, try a full
@@ -355,6 +381,31 @@ an idle group costs no CPU and doesn't keep your speakers awake.
 - Each speaker in a group is a separate Bluetooth audio stream. On a
   Raspberry Pi 4, the onboard radio can struggle with several of them,
   see the crackling/dropouts entry in [Troubleshooting](#troubleshooting).
+
+## Letting another device use a speaker (Pause)
+
+A Bluetooth speaker usually talks to one source at a time, and the
+add-on keeps reconnecting to its speakers. To play something from your
+phone on a speaker without unpairing it from the host, use **Pause** on
+the speaker's card in the pairing page:
+
+1. Click **Pause** and enter after how many minutes the add-on should
+   reconnect by itself, or `0` to wait until you click **Resume**.
+2. The add-on disconnects the speaker, keeps its pairing, and refuses to
+   reconnect to it. Its `media_player` becomes unavailable meanwhile.
+3. Connect your phone to the speaker (the phone has to be paired with it
+   already) and play.
+4. When you're done, disconnect the phone (turn its Bluetooth off, or
+   disconnect from the speaker) and click **Resume**, or wait for the
+   timer. The add-on reconnects right away, and the `media_player` comes
+   back within about half a minute.
+
+Good to know: the speaker must be free for the add-on to reconnect, so
+if it stays connected to your phone, the add-on keeps retrying and
+succeeds once the phone lets go. A pause never survives an add-on
+restart: restarting the add-on (or Home Assistant) ends it. Some
+speakers reconnect to the last device they knew when switched on, so
+pausing is the reliable way to keep the host from grabbing it back.
 
 ## Voice PE
 
@@ -473,9 +524,15 @@ the next host reboot.
   pairing mode *when you click Pair* (many speakers leave pairing mode
   after a minute or two), close to the host, and not connected to a
   phone. Speakers that ask for a PIN code can't be paired from the page:
-  use [Manual pairing (fallback)](#manual-pairing-fallback). The error
+  use [Manual pairing (fallback)](#manual-pairing-fallback). Speakers that
+  only ask to confirm a number (Secure Simple Pairing) are confirmed
+  automatically by the page since 2.4.3. If pairing still fails with
+  `AuthenticationTimeout`, the speaker is probably waiting for something
+  the page can't answer, such as a PIN code. The error
   shown on the page, and the add-on's Log tab, include the reason
-  reported by Bluetooth.
+  reported by Bluetooth. If a speaker that used to work no longer
+  reconnects at all, click **Forget** on its card, put it in pairing
+  mode and click **Pair** again.
 - **The Bluetooth Audio panel doesn't open, or shows an error**: look for
   a `Starting the pairing web UI` line in the add-on's Log tab. If
   there's an error about the ingress address/port instead, restart the

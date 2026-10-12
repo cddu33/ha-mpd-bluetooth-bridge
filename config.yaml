@@ -14,7 +14,7 @@ name: "Bluetooth Audio Bridge"
 # Ancien nom : "Bluetooth Speaker MPD Bridge" (ancien nom encore avant :
 # "MPD JBL Bridge").
 
-version: "2.7.0"
+version: "2.8.0"
 # Version de l'add-on. À incrémenter à chaque modification si on veut
 # que le Supervisor propose une "mise à jour" plus tard.
 # Bump en 2.0.0 : changement de nom/slug (rupture de compatibilité pour
@@ -48,6 +48,23 @@ version: "2.7.0"
 # branche `fix/issue-9-initial-volume` avant merge dans master : JZ-B5W2,
 # valeur par défaut (inchangée) puis `renderer_volume` à 50 avec cycle de
 # déconnexion/reconnexion.
+# Bump en 2.4.3 (2026-10-06) : la page d'appairage répond d'elle-même aux
+# demandes de confirmation Secure Simple Pairing (voir CHANGELOG, GitHub
+# issue #7), son message d'erreur AuthenticationTimeout/AuthenticationFailed
+# est moins trompeur, et un bouton Forget apparaît sur les enceintes déjà
+# configurées. Branches `fix/issue-7-ssp-confirmation` (banc de test à vide,
+# puis non-régression sur la JZ-B5W2) et `feature/forget-configured-speaker`.
+# Bump en 2.5.0 (2026-10-06) : Pause et Resume par enceinte dans la page
+# d'appairage (voir CHANGELOG, GitHub issue #8) : l'enceinte est bloquée côté
+# BlueZ et la boucle de surveillance ne la reconnecte plus, pour qu'un
+# téléphone puisse la prendre. Testé sur la JZ-B5W2 depuis la branche
+# `feature/pause-speaker` : pause minutée avec reprise automatique, pause
+# sans limite avec Resume, téléphone connecté et lecture pendant la pause,
+# redémarrage de l'add-on pendant une pause (le blocage est levé). La page
+# d'appairage est aussi traduite (français ou anglais selon le navigateur).
+# Bump en 2.5.1 (2026-10-07) : Set as primary garde l'ancienne principale
+# comme enceinte supplémentaire au lieu de la supprimer (voir CHANGELOG,
+# GitHub issue #8). Branche `fix/set-primary-keeps-previous`.
 # Bump en 2.6.0 : synchronisation avec master (renderer_volume, correctif
 # pipefail et port DLNA fixe par enceinte, ci-dessus) et ajout des
 # **groupes synchronisés** (`sync_groups`) et du décalage de synchro par
@@ -57,6 +74,10 @@ version: "2.7.0"
 # SUPERVISOR_TOKEN aux sous-processus CGI, nettoyage à l'arrêt/désinstallation
 # des sinks combinés des groupes synchronisés (quand `enable_mpd` est
 # désactivé), et nettoyage shellcheck/CI. Voir CHANGELOG.
+# Bump en 2.8.0 : synchronisation du fork avec master amont
+# (dcybeldesign, 2.4.3 à 2.5.1 : confirmation SSP, Forget, Pause/Resume,
+# traduction de la page, Set as primary qui garde l'ancienne principale).
+# L'ancienne principale garde aussi son décalage de synchro. Voir CHANGELOG.
 
 slug: "bluetooth_audio_bridge"
 # Identifiant technique unique de l'add-on (utilisé dans les URLs internes,

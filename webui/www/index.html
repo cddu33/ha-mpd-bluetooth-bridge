@@ -94,6 +94,7 @@
   }
   dialog::backdrop { background: rgba(0, 0, 0, .45); }
   dialog label { display: block; margin-top: 12px; font-size: 14px; color: var(--muted); }
+  dialog label[hidden] { display: none; }
   dialog input {
     display: block; width: 100%; margin-top: 4px; padding: 8px 10px; font: inherit; border-radius: 8px;
     border: 1px solid var(--border); background: var(--bg); color: var(--text);
@@ -131,32 +132,32 @@
 <main>
   <header>
     <h1>Bluetooth Audio Bridge</h1>
-    <p class="muted">Find, pair and choose the Bluetooth speakers this add-on plays to.</p>
+    <p id="subtitle" class="muted">Find, pair and choose the Bluetooth speakers this add-on plays to.</p>
   </header>
 
   <div id="banner" hidden></div>
 
   <section class="card">
-    <h2>Configured speakers</h2>
+    <h2 id="configured-title">Configured speakers</h2>
     <div id="speakers"><p class="muted">Loading…</p></div>
   </section>
 
   <section class="card" id="groups-section" hidden>
-    <h2>Synchronized groups</h2>
-    <p class="muted">
+    <h2 id="groups-title">Synchronized groups</h2>
+    <p id="groups-help" class="muted">
       A group plays the same audio on several speakers, in sync, as one more media_player in Home Assistant
       (and in Music Assistant through its DLNA provider). If a speaker sounds late, play the test ticks and
       raise its offset until you hear a single tick. Offsets apply live and settle gradually over a few seconds.
     </p>
     <div id="groups"></div>
     <form id="group-form" class="group-form" hidden>
-      <h3>New group</h3>
+      <h3 id="group-new-title">New group</h3>
       <label class="field">
-        Name shown in Home Assistant
+        <span id="group-name-text">Name shown in Home Assistant</span>
         <input id="group-name" type="text" maxlength="64" required pattern='[^"\\]+' title="Quotes and backslashes are not allowed">
       </label>
       <fieldset id="group-members">
-        <legend>Speakers (at least two)</legend>
+        <legend id="group-members-legend">Speakers (at least two)</legend>
       </fieldset>
       <div class="buttons">
         <button id="group-create" type="submit" class="primary">Create group</button>
@@ -165,15 +166,15 @@
   </section>
 
   <section class="card">
-    <h2>Find a speaker</h2>
-    <p class="muted">
+    <h2 id="find-title">Find a speaker</h2>
+    <p id="find-help" class="muted">
       Put your speaker in pairing mode first (usually by holding its power or Bluetooth button until a
       light blinks), then scan. Speakers that ask for a PIN code must be paired manually, see the
       add-on documentation.
     </p>
     <div class="toolbar">
       <button id="scan" class="primary" type="button" disabled>Scan (30 s)</button>
-      <label class="check"><input id="show-all" type="checkbox"> Show non-audio devices</label>
+      <label class="check"><input id="show-all" type="checkbox"> <span id="show-all-text">Show non-audio devices</span></label>
     </div>
     <div id="devices"></div>
   </section>
@@ -184,11 +185,11 @@
     <h2 id="dialog-title"></h2>
     <p id="dialog-text" class="muted"></p>
     <label id="dialog-label" hidden>
-      Name shown in Home Assistant
+      <span id="dialog-label-text">Name shown in Home Assistant</span>
       <input id="dialog-input" maxlength="64" pattern='[^"\\]+' title="Quotes and backslashes are not allowed">
     </label>
     <div class="buttons">
-      <button type="submit" value="cancel" formnovalidate>Cancel</button>
+      <button type="submit" value="cancel" id="dialog-cancel" formnovalidate>Cancel</button>
       <button type="submit" value="ok" id="dialog-ok" class="primary">OK</button>
     </div>
   </form>
@@ -202,6 +203,249 @@ const ACTION_URL = 'cgi-bin/action.cgi';
 const RESTART_MIN_MS = 8000;      // en dessous, la réponse vient encore de l'ancien conteneur
 const RESTART_MAX_MS = 180000;    // au-delà, on arrête d'attendre et on le signale
 const RECENT_JOB_SECONDS = 600;   // résultat d'opération affiché pendant 10 min au plus
+
+// --- Langue de la page ---
+// Les textes anglais servent de clés : un texte absent d'un dictionnaire
+// reste simplement en anglais. Pour ajouter une langue, ajouter un
+// dictionnaire sous son code à deux lettres dans TRANSLATIONS (le sélecteur
+// la prend alors en compte tout seul), et au besoin ses variantes de phrases
+// à nombre variable dans SERVER_PATTERNS. La langue est celle du navigateur
+// (navigator.languages) : la page, dans l'iframe de l'ingress, ne peut pas
+// lire la langue du profil Home Assistant. "?lang=fr" force une langue.
+const TRANSLATIONS = {
+  fr: {
+    'Bluetooth Audio Bridge — Pairing': 'Bluetooth Audio Bridge : appairage',
+    'Find, pair and choose the Bluetooth speakers this add-on plays to.':
+      "Trouvez, appairez et choisissez les enceintes Bluetooth sur lesquelles cet add-on joue.",
+    'Configured speakers': 'Enceintes configurées',
+    'Find a speaker': 'Trouver une enceinte',
+    'Put your speaker in pairing mode first (usually by holding its power or Bluetooth button until a light blinks), then scan. Speakers that ask for a PIN code must be paired manually, see the add-on documentation.':
+      "Mettez d'abord votre enceinte en mode appairage (en général en maintenant son bouton d'alimentation ou Bluetooth jusqu'à ce qu'un voyant clignote), puis lancez le scan. Les enceintes qui demandent un code PIN doivent être appairées manuellement, voir la documentation de l'add-on.",
+    'Show non-audio devices': 'Afficher les appareils non audio',
+    'Cancel': 'Annuler',
+    'Dismiss': 'Fermer',
+    'Loading…': 'Chargement…',
+    'Waiting for the add-on…': "En attente de l'add-on…",
+    'Scan (30 s)': 'Scanner (30 s)',
+    'Scanning…': 'Scan en cours…',
+    'Paired': 'Appairée',
+    'Not paired': 'Non appairée',
+    'Trusted': 'De confiance',
+    'Not trusted': 'Pas de confiance',
+    'Connected': 'Connectée',
+    'Disconnected': 'Déconnectée',
+    'Primary': 'Principale',
+    'Extra': 'Supplémentaire',
+    'Pair': 'Appairer',
+    'Forget': 'Oublier',
+    'Pause': 'Pause',
+    'Resume': 'Reprendre',
+    'Set as primary': 'Définir comme principale',
+    'Add as extra': 'Ajouter comme supplémentaire',
+    'Paused': 'En pause',
+    'Paused until {time}': "En pause jusqu'à {time}",
+    'Pause {name}?': 'Mettre {name} en pause ?',
+    'The add-on lets go of {name} and refuses to reconnect to it, so another device, such as a phone already paired with the speaker, can connect to it. Its media_player becomes unavailable meanwhile. Enter after how many minutes the add-on should reconnect by itself, or 0 to wait until you click Resume.':
+      "L'add-on lâche {name} et refuse de s'y reconnecter, pour qu'un autre appareil, par exemple un téléphone déjà appairé avec l'enceinte, puisse s'y connecter. Son media_player devient indisponible pendant ce temps. Indiquez au bout de combien de minutes l'add-on doit se reconnecter tout seul, ou 0 pour attendre que vous cliquiez sur Reprendre.",
+    'Minutes (0 = until you click Resume)': "Minutes (0 = jusqu'à ce que vous cliquiez sur Reprendre)",
+    'A whole number from 0 to 1440': 'Un nombre entier de 0 à 1440',
+    'Set as primary speaker': 'Définir comme enceinte principale',
+    'The add-on saves it to its configuration and restarts to start playing to this speaker.':
+      "L'add-on l'enregistre dans sa configuration et redémarre pour jouer sur cette enceinte.",
+    'The current primary speaker, {name} ({mac}), becomes an extra speaker. {text}':
+      "L'enceinte principale actuelle, {name} ({mac}), devient une enceinte supplémentaire. {text}",
+    'Save and restart': 'Enregistrer et redémarrer',
+    'Add as extra speaker': 'Ajouter comme enceinte supplémentaire',
+    'It gets its own media_player in Home Assistant. The add-on saves it to its configuration and restarts.':
+      "Elle obtient son propre media_player dans Home Assistant. L'add-on l'enregistre dans sa configuration et redémarre.",
+    'Name shown in Home Assistant': 'Nom affiché dans Home Assistant',
+    'Quotes and backslashes are not allowed': 'Les guillemets et les barres obliques inverses sont interdits',
+    'Forget {name}?': 'Oublier {name} ?',
+    'It will have to be paired again before it can be used.':
+      'Elle devra être appairée de nouveau avant de pouvoir être utilisée.',
+    'It is still configured in this add-on: remove it from the Configuration tab too if you no longer use it.':
+      "Elle est toujours configurée dans cet add-on : retirez-la aussi de l'onglet Configuration si vous ne l'utilisez plus.",
+    'Restarting the add-on to apply the new configuration…':
+      "Redémarrage de l'add-on pour appliquer la nouvelle configuration…",
+    'Cannot reach the add-on: {msg}': "Impossible de joindre l'add-on : {msg}",
+    'The add-on did not come back after restarting. Check its Log tab.':
+      "L'add-on n'est pas revenu après le redémarrage. Consultez son onglet Journal.",
+    'No speaker configured yet: the add-on is in setup mode and its audio outputs are not started. Scan for your speaker below, pair it, then set it as the primary speaker.':
+      "Aucune enceinte configurée pour l'instant : l'add-on est en mode configuration et ses sorties audio ne sont pas démarrées. Scannez votre enceinte ci-dessous, appairez-la, puis définissez-la comme enceinte principale.",
+    'Click Scan to look for nearby speakers.': 'Cliquez sur Scanner pour chercher les enceintes à proximité.',
+    'No audio device found. Make sure the speaker is in pairing mode, close to the host, and not connected to a phone, then scan again.':
+      "Aucun appareil audio trouvé. Vérifiez que l'enceinte est en mode appairage, proche de l'hôte et non connectée à un téléphone, puis scannez de nouveau.",
+    '({n} non-audio device hidden.)': '({n} appareil non audio masqué.)',
+    '({n} non-audio devices hidden.)': '({n} appareils non audio masqués.)',
+    // Messages envoyés par les scripts CGI (voir serverMessage plus bas).
+    'Only reachable through Home Assistant ingress.': "Accessible uniquement par l'ingress de Home Assistant.",
+    'Unexpected failure (exit code {rc}), see the add-on log.':
+      "Échec inattendu (code de sortie {rc}), consultez le journal de l'add-on.",
+    'Scanning for {n} seconds... Keep your speaker in pairing mode.':
+      'Scan pendant {n} secondes... Gardez votre enceinte en mode appairage.',
+    'Reading scan results...': 'Lecture des résultats du scan...',
+    'Scan finished: {n} audio device(s) found.': 'Scan terminé : {n} appareil(s) audio trouvé(s).',
+    'Pairing with {mac}... Keep the speaker in pairing mode (this can take up to a minute).':
+      "Appairage avec {mac}... Gardez l'enceinte en mode appairage (cela peut prendre jusqu'à une minute).",
+    'Pairing with {mac} failed': "L'appairage avec {mac} a échoué",
+    'Put the speaker in pairing mode, keep it close to the host and try again.':
+      "Mettez l'enceinte en mode appairage, gardez-la proche de l'hôte et réessayez.",
+    'If the speaker was already in pairing mode and close, it may be waiting for a confirmation or PIN code that this page could not answer.':
+      "Si l'enceinte était déjà en mode appairage et proche, elle attend peut-être une confirmation ou un code PIN auquel cette page n'a pas pu répondre.",
+    'Speakers that ask for a PIN code must be paired manually (see the add-on documentation).':
+      "Les enceintes qui demandent un code PIN doivent être appairées manuellement (voir la documentation de l'add-on).",
+    'Paired. Trusting and connecting...': 'Appairée. Approbation et connexion...',
+    'Paired, but {mac} could not be marked as trusted: automatic reconnection will not work. Click Pair again.':
+      "Appairée, mais {mac} n'a pas pu être marquée comme de confiance : la reconnexion automatique ne fonctionnera pas. Cliquez de nouveau sur Appairer.",
+    'Paired and trusted, but not connected right now. You can still select it: the add-on reconnects it automatically.':
+      "Appairée et de confiance, mais pas connectée pour l'instant. Vous pouvez quand même la sélectionner : l'add-on la reconnecte automatiquement.",
+    'Paired, trusted and connected. Now set it as the primary speaker or add it as an extra one.':
+      "Appairée, de confiance et connectée. Définissez-la maintenant comme enceinte principale ou ajoutez-la comme supplémentaire.",
+    'Invalid Bluetooth MAC address.': 'Adresse MAC Bluetooth invalide.',
+    'The name must be 1 to 64 characters long.': 'Le nom doit comporter de 1 à 64 caractères.',
+    "The name can't contain quotes or backslashes.": 'Le nom ne peut pas contenir de guillemets ni de barres obliques inverses.',
+    "The name can't contain control characters.": 'Le nom ne peut pas contenir de caractères de contrôle.',
+    'This speaker is not configured in the add-on.': "Cette enceinte n'est pas configurée dans l'add-on.",
+    'Another Bluetooth operation is still running, wait for it to finish.':
+      "Une autre opération Bluetooth est encore en cours, attendez qu'elle se termine.",
+    'The Supervisor rejected the new configuration: {error}':
+      'Le Supervisor a refusé la nouvelle configuration : {error}',
+    'Could not forget {mac}.': "Impossible d'oublier {mac}.",
+    'Minutes must be a whole number from 0 to 1440.': 'Les minutes doivent être un nombre entier de 0 à 1440.',
+    'Could not release {mac}.': 'Impossible de libérer {mac}.',
+    'Set a primary speaker first.': "Définissez d'abord une enceinte principale.",
+    'This speaker is already the primary speaker.': 'Cette enceinte est déjà l\'enceinte principale.',
+    'This speaker is already an extra speaker.': 'Cette enceinte est déjà une enceinte supplémentaire.',
+    // Groupes synchronisés.
+    'Synchronized groups': 'Groupes synchronisés',
+    'A group plays the same audio on several speakers, in sync, as one more media_player in Home Assistant (and in Music Assistant through its DLNA provider). If a speaker sounds late, play the test ticks and raise its offset until you hear a single tick. Offsets apply live and settle gradually over a few seconds.':
+      "Un groupe joue le même son sur plusieurs enceintes, en synchro, comme un media_player de plus dans Home Assistant (et dans Music Assistant via son fournisseur DLNA). Si une enceinte sonne en retard, jouez les tics de test et augmentez son décalage jusqu'à n'entendre qu'un seul tic. Les décalages s'appliquent en direct et se stabilisent en quelques secondes.",
+    'New group': 'Nouveau groupe',
+    'Speakers (at least two)': 'Enceintes (au moins deux)',
+    'Create group': 'Créer le groupe',
+    'Playing': 'En lecture',
+    'Awake': 'Éveillé',
+    'Standby': 'En veille',
+    'No speaker connected': 'Aucune enceinte connectée',
+    'Restart the add-on to start it': "Redémarrez l'add-on pour le démarrer",
+    'Not started': 'Non démarré',
+    'Test ticks': 'Tics de test',
+    'Delete': 'Supprimer',
+    'disconnected': 'déconnectée',
+    'Sync offset of {name}, in milliseconds': 'Décalage de synchro de {name}, en millisecondes',
+    'Could not save the offset of {name}: {msg}': "Impossible d'enregistrer le décalage de {name} : {msg}",
+    'Create the group {name}?': 'Créer le groupe {name} ?',
+    'The add-on saves it to its configuration and restarts. The group then shows up as a new media_player in Home Assistant within a few minutes.':
+      "L'add-on l'enregistre dans sa configuration et redémarre. Le groupe apparaît ensuite comme un nouveau media_player dans Home Assistant en quelques minutes.",
+    'Delete the group {name}?': 'Supprimer le groupe {name} ?',
+    'The add-on removes it from its configuration and restarts. Its media_player in Home Assistant then becomes unavailable: delete it there if you no longer need it.':
+      "L'add-on le retire de sa configuration et redémarre. Son media_player dans Home Assistant devient alors indisponible : supprimez-le là-bas si vous n'en avez plus besoin.",
+    'Delete and restart': 'Supprimer et redémarrer',
+    'Add at least two speakers (a primary and an extra one) to create a synchronized group.':
+      'Ajoutez au moins deux enceintes (une principale et une supplémentaire) pour créer un groupe synchronisé.',
+    'No synchronized group yet.': 'Aucun groupe synchronisé pour l\'instant.',
+    'Pick at least two speakers for a synchronized group.': 'Choisissez au moins deux enceintes pour un groupe synchronisé.',
+    // Raisons pour lesquelles run.sh ignore un groupe (groups.json).
+    'This group has no name.': "Ce groupe n'a pas de nom.",
+    'A synchronized group needs at least two speakers configured in this add-on.':
+      'Un groupe synchronisé a besoin d\'au moins deux enceintes configurées dans cet add-on.',
+    'Another group already uses this name.': 'Un autre groupe utilise déjà ce nom.',
+    // Messages des scripts CGI pour les groupes.
+    'A group with this name already exists.': 'Un groupe portant ce nom existe déjà.',
+    '{mac} is not a speaker configured in this add-on.': "{mac} n'est pas une enceinte configurée dans cet add-on.",
+    'This group is no longer in the configuration.': "Ce groupe n'est plus dans la configuration.",
+    'The offset must be a number of milliseconds.': 'Le décalage doit être un nombre de millisecondes.',
+    'This group is not running: restart the add-on to start it.':
+      "Ce groupe n'est pas démarré : redémarrez l'add-on pour le démarrer.",
+    "None of this group's speakers is connected right now.": "Aucune enceinte de ce groupe n'est connectée pour l'instant.",
+    'gst-launch-1.0 is missing from the add-on image, check the build log.':
+      "gst-launch-1.0 manque dans l'image de l'add-on, consultez le journal de construction.",
+    'Another operation is still running, wait for it to finish.':
+      "Une autre opération est encore en cours, attendez qu'elle se termine.",
+    'Playing test ticks for {n} seconds: raise the offset of any speaker that ticks late, until you hear a single tick.':
+      "Tics de test pendant {n} secondes : augmentez le décalage de toute enceinte en retard, jusqu'à n'entendre qu'un seul tic.",
+    'Test ticks finished.': 'Tics de test terminés.',
+    'Could not play the test ticks (exit code {rc}), see the add-on log.':
+      "Impossible de jouer les tics de test (code de sortie {rc}), consultez le journal de l'add-on.",
+    'Expected a JSON object body.': 'Corps JSON attendu.',
+    'The operation was interrupted, try again.': "L'opération a été interrompue, réessayez.",
+    'Unknown action.': 'Action inconnue.',
+  },
+};
+
+function pickLanguage() {
+  const wanted = new URLSearchParams(location.search).get('lang');
+  const candidates = wanted ? [wanted]
+    : (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || 'en']);
+  for (const candidate of candidates) {
+    const code = String(candidate).toLowerCase().split('-')[0];
+    if (code === 'en' || TRANSLATIONS[code]) return code;
+  }
+  return 'en';
+}
+
+const LANG = pickLanguage();
+
+// t(texte anglais, { variable: valeur }) : traduit puis remplace les {variable}.
+function t(text, vars = {}) {
+  let out = (TRANSLATIONS[LANG] && TRANSLATIONS[LANG][text]) || text;
+  for (const [key, value] of Object.entries(vars)) out = out.split(`{${key}}`).join(value);
+  return out;
+}
+
+// Phrases des scripts CGI qui contiennent une valeur variable, reconnues par
+// motif pour être traduites avec la même clé que celle du dictionnaire.
+const SERVER_PATTERNS = [
+  [/^Scanning for (\d+) seconds\.\.\. Keep your speaker in pairing mode\.$/, 'Scanning for {n} seconds... Keep your speaker in pairing mode.', ['n']],
+  [/^Scan finished: (\d+) audio device\(s\) found\.$/, 'Scan finished: {n} audio device(s) found.', ['n']],
+  [/^Pairing with (\S+)\.\.\. Keep the speaker in pairing mode \(this can take up to a minute\)\.$/, 'Pairing with {mac}... Keep the speaker in pairing mode (this can take up to a minute).', ['mac']],
+  [/^Paired, but (\S+) could not be marked as trusted: automatic reconnection will not work\. Click Pair again\.$/, 'Paired, but {mac} could not be marked as trusted: automatic reconnection will not work. Click Pair again.', ['mac']],
+  [/^Unexpected failure \(exit code (\d+)\), see the add-on log\.$/, 'Unexpected failure (exit code {rc}), see the add-on log.', ['rc']],
+  [/^The Supervisor rejected the new configuration: (.*)$/s, 'The Supervisor rejected the new configuration: {error}', ['error']],
+  [/^Could not forget (\S+)\.$/, 'Could not forget {mac}.', ['mac']],
+  [/^Could not release (\S+)\.$/, 'Could not release {mac}.', ['mac']],
+  [/^(\S+) is not a speaker configured in this add-on\.$/, '{mac} is not a speaker configured in this add-on.', ['mac']],
+  [/^Playing test ticks for (\d+) seconds: raise the offset of any speaker that ticks late, until you hear a single tick\.$/, 'Playing test ticks for {n} seconds: raise the offset of any speaker that ticks late, until you hear a single tick.', ['n']],
+  [/^Could not play the test ticks \(exit code (\d+)\), see the add-on log\.$/, 'Could not play the test ticks (exit code {rc}), see the add-on log.', ['rc']],
+];
+
+// Échec d'appairage : « Pairing with X failed (raison). Put the speaker ... »
+// composée de morceaux (raison et conseil facultatifs), traduits un à un.
+const PAIRING_FAILED = new RegExp(
+  '^Pairing with (\\S+) failed(?: \\((.+?)\\))?\\. (Put the speaker in pairing mode, keep it close to the host and try again\\.)' +
+  '(?: (If the speaker was already in pairing mode and close, it may be waiting for a confirmation or PIN code that this page could not answer\\.))?' +
+  ' (Speakers that ask for a PIN code must be paired manually \\(see the add-on documentation\\)\\.)$', 's');
+
+// serverMessage(texte anglais renvoyé par un CGI) : sa traduction si elle existe.
+function serverMessage(message) {
+  if (LANG === 'en' || !message) return message;
+  let m = message.match(/^Cannot reach the add-on: (.*)$/s);
+  if (m) return t('Cannot reach the add-on: {msg}', { msg: serverMessage(m[1]) });
+  m = PAIRING_FAILED.exec(message);
+  if (m) {
+    const parts = [t('Pairing with {mac} failed', { mac: m[1] }) + (m[2] ? ` (${m[2]})` : '') + '.', t(m[3])];
+    if (m[4]) parts.push(t(m[4]));
+    parts.push(t(m[5]));
+    return parts.join(' ');
+  }
+  for (const [regex, key, names] of SERVER_PATTERNS) {
+    m = regex.exec(message);
+    if (m) return t(key, Object.fromEntries(names.map((name, i) => [name, m[i + 1]])));
+  }
+  return t(message);
+}
+
+function applyStaticTranslations() {
+  document.documentElement.lang = LANG;
+  document.title = t(document.title);
+  for (const id of ['subtitle', 'configured-title', 'find-title', 'find-help', 'show-all-text', 'dialog-cancel',
+    'groups-title', 'groups-help', 'group-new-title', 'group-name-text', 'group-members-legend', 'group-create']) {
+    const node = document.getElementById(id);
+    node.textContent = t(node.textContent.trim().replace(/\s+/g, ' '));
+  }
+  const groupName = document.getElementById('group-name');
+  groupName.title = t(groupName.title);
+}
 
 let state = null;           // dernière réponse de status.cgi
 let pending = false;        // requête action.cgi en cours
@@ -242,7 +486,7 @@ function button(label, className, disabled, onclick) {
 }
 
 function badges(device) {
-  const badge = (on, yes, no) => el('span', { class: on ? 'badge on' : 'badge' }, on ? yes : no);
+  const badge = (on, yes, no) => el('span', { class: on ? 'badge on' : 'badge' }, t(on ? yes : no));
   return el('div', { class: 'badges' },
     badge(device.paired, 'Paired', 'Not paired'),
     badge(device.trusted, 'Trusted', 'Not trusted'),
@@ -271,6 +515,7 @@ async function refresh() {
     if (restartingSince && Date.now() - restartingSince > RESTART_MIN_MS) restartingSince = 0;
   } catch (error) {
     // Pendant un redémarrage, l'add-on est injoignable quelques secondes : normal.
+    // actionError reste en anglais : serverMessage() le traduit à l'affichage.
     if (!restartingSince) actionError = `Cannot reach the add-on: ${error.message}`;
   }
   if (restartingSince && Date.now() - restartingSince > RESTART_MAX_MS) {
@@ -305,15 +550,23 @@ async function act(payload) {
 // Boîte de dialogue maison plutôt que prompt()/confirm() : ces derniers ne
 // sont pas toujours affichés dans les applications mobiles Home Assistant.
 // Résout avec null si annulé, sinon avec le nom saisi ('' sans champ).
-function ask({ title, text, input = null, ok = 'OK', danger = false }) {
+function ask({
+  title, text, input = null, ok = 'OK', danger = false,
+  label: labelText = t('Name shown in Home Assistant'),
+  pattern = '[^"\\\\]+',
+  hint = t('Quotes and backslashes are not allowed'),
+}) {
   const dialog = document.getElementById('dialog');
   const label = document.getElementById('dialog-label');
   const field = document.getElementById('dialog-input');
   const okButton = document.getElementById('dialog-ok');
   document.getElementById('dialog-title').textContent = title;
   document.getElementById('dialog-text').textContent = text;
+  document.getElementById('dialog-label-text').textContent = labelText;
   label.hidden = input === null;
   field.required = input !== null;
+  field.pattern = pattern;
+  field.title = hint;
   field.value = input ?? '';
   okButton.textContent = ok;
   okButton.className = danger ? 'danger' : 'primary';
@@ -333,28 +586,35 @@ function pair(device) {
 }
 
 async function setPrimary(device, primary) {
-  let text = 'The add-on saves it to its configuration and restarts to start playing to this speaker.';
+  let text = t('The add-on saves it to its configuration and restarts to start playing to this speaker.');
   if (primary && primary.mac !== device.mac) {
-    text = `This replaces the current primary speaker, ${primary.name || primary.mac} (${primary.mac}). ${text}`;
+    text = t('The current primary speaker, {name} ({mac}), becomes an extra speaker. {text}',
+      { name: primary.name || primary.mac, mac: primary.mac, text });
   }
-  const name = await ask({ title: 'Set as primary speaker', text, input: device.name || 'Bluetooth Speaker', ok: 'Save and restart' });
+  const name = await ask({
+    title: t('Set as primary speaker'), text, input: device.name || 'Bluetooth Speaker', ok: t('Save and restart'),
+  });
   if (name !== null) act({ action: 'set_primary', mac: device.mac, name });
 }
 
 async function addExtra(device) {
   const name = await ask({
-    title: 'Add as extra speaker',
-    text: 'It gets its own media_player in Home Assistant. The add-on saves it to its configuration and restarts.',
+    title: t('Add as extra speaker'),
+    text: t('It gets its own media_player in Home Assistant. The add-on saves it to its configuration and restarts.'),
     input: device.name || 'Bluetooth Speaker',
-    ok: 'Save and restart',
+    ok: t('Save and restart'),
   });
   if (name !== null) act({ action: 'add_extra', mac: device.mac, name });
 }
 
 async function forget(device, configured) {
-  let text = 'It will have to be paired again before it can be used.';
-  if (configured) text += ' It is still configured in this add-on: remove it from the Configuration tab too if you no longer use it.';
-  const confirmed = await ask({ title: `Forget ${device.name || device.mac}?`, text, ok: 'Forget', danger: true });
+  let text = t('It will have to be paired again before it can be used.');
+  if (configured) {
+    text += ' ' + t('It is still configured in this add-on: remove it from the Configuration tab too if you no longer use it.');
+  }
+  const confirmed = await ask({
+    title: t('Forget {name}?', { name: device.name || device.mac }), text, ok: t('Forget'), danger: true,
+  });
   if (confirmed !== null) act({ action: 'forget', mac: device.mac });
 }
 
@@ -367,6 +627,7 @@ const GROUP_STATES = {
   missing: ['badge', 'No speaker connected'],
   restart: ['badge', 'Restart the add-on to start it'],
   invalid: ['badge err', 'Not started'],
+  // Textes traduits à l'affichage (groupItem).
 };
 
 function speakerLabel(mac) {
@@ -421,7 +682,7 @@ async function flushLatency() {
         if (latencyDrafts.get(mac) === ms) latencyDrafts.delete(mac);
       } catch (error) {
         latencyDrafts.delete(mac);
-        actionError = `Could not save the offset of ${speakerLabel(mac)}: ${error.message}`;
+        actionError = t('Could not save the offset of {name}: {msg}', { name: speakerLabel(mac), msg: serverMessage(error.message) });
         groupsSignature = '';
         render();
       }
@@ -437,11 +698,11 @@ function latencyRow(mac, disabled) {
   const value = currentLatency(mac);
   return el('div', { class: 'offset-row', 'data-mac': mac },
     el('span', { class: 'offset-name' }, name,
-      speaker && !speaker.connected && el('span', { class: 'hint' }, ' (disconnected)')),
+      speaker && !speaker.connected && el('span', { class: 'hint' }, ` (${t('disconnected')})`)),
     button(`−${LATENCY_STEP}`, 'small', disabled, () => setLatency(mac, currentLatency(mac) - LATENCY_STEP)),
     el('input', {
       type: 'range', min: 0, max: LATENCY_MAX, step: LATENCY_STEP, value, disabled,
-      'aria-label': `Sync offset of ${name}, in milliseconds`,
+      'aria-label': t('Sync offset of {name}, in milliseconds', { name }),
       oninput: (event) => setLatency(mac, Number(event.target.value)),
       onpointerdown: () => { draggingSlider = true; },
     }),
@@ -454,11 +715,11 @@ function groupItem(group, locked, tuningDisabled) {
   const running = ['playing', 'idle', 'standby'].includes(group.state);
   return el('li', { class: 'item' },
     el('div', { class: 'who' },
-      el('div', { class: 'name' }, group.name, ' ', el('span', { class: badgeClass }, badgeText)),
-      group.error && el('div', { class: 'hint err' }, group.error)),
+      el('div', { class: 'name' }, group.name, ' ', el('span', { class: badgeClass }, t(badgeText))),
+      group.error && el('div', { class: 'hint err' }, t(group.error))),
     el('div', { class: 'actions' },
-      button('Test ticks', '', locked || !running, () => act({ action: 'test_ticks', name: group.name })),
-      button('Delete', 'danger', locked, () => removeGroup(group))),
+      button(t('Test ticks'), '', locked || !running, () => act({ action: 'test_ticks', name: group.name })),
+      button(t('Delete'), 'danger', locked, () => removeGroup(group))),
     el('div', { class: 'tuning' }, ...group.members.map((mac) => latencyRow(mac, tuningDisabled))));
 }
 
@@ -478,9 +739,9 @@ async function createGroup(event) {
     return;
   }
   const confirmed = await ask({
-    title: `Create the group ${name}?`,
-    text: 'The add-on saves it to its configuration and restarts. The group then shows up as a new media_player in Home Assistant within a few minutes.',
-    ok: 'Save and restart',
+    title: t('Create the group {name}?', { name }),
+    text: t('The add-on saves it to its configuration and restarts. The group then shows up as a new media_player in Home Assistant within a few minutes.'),
+    ok: t('Save and restart'),
   });
   if (confirmed === null) return;
   field.value = '';
@@ -490,9 +751,9 @@ async function createGroup(event) {
 
 async function removeGroup(group) {
   const confirmed = await ask({
-    title: `Delete the group ${group.name}?`,
-    text: 'The add-on removes it from its configuration and restarts. Its media_player in Home Assistant then becomes unavailable: delete it there if you no longer need it.',
-    ok: 'Delete and restart',
+    title: t('Delete the group {name}?', { name: group.name }),
+    text: t('The add-on removes it from its configuration and restarts. Its media_player in Home Assistant then becomes unavailable: delete it there if you no longer need it.'),
+    ok: t('Delete and restart'),
     danger: true,
   });
   if (confirmed !== null) act({ action: 'remove_group', name: group.name });
@@ -518,8 +779,8 @@ function renderGroups(locked) {
   box.replaceChildren();
   if (!state.groups.length) {
     box.append(el('p', { class: 'muted', style: 'margin-top: 12px' }, state.speakers.length < 2
-      ? 'Add at least two speakers (a primary and an extra one) to create a synchronized group.'
-      : 'No synchronized group yet.'));
+      ? t('Add at least two speakers (a primary and an extra one) to create a synchronized group.')
+      : t('No synchronized group yet.')));
     return;
   }
   const list = el('ul', { class: 'list' });
@@ -548,6 +809,31 @@ function renderGroupForm(locked) {
   document.getElementById('group-create').disabled = locked;
 }
 
+async function pauseSpeaker(speaker) {
+  const name = speaker.name || speaker.device_name || speaker.mac;
+  const text = t('The add-on lets go of {name} and refuses to reconnect to it, so another device, such as a phone already paired with the speaker, can connect to it. Its media_player becomes unavailable meanwhile. Enter after how many minutes the add-on should reconnect by itself, or 0 to wait until you click Resume.', { name });
+  const minutes = await ask({
+    title: t('Pause {name}?', { name }),
+    text,
+    input: '60',
+    label: t('Minutes (0 = until you click Resume)'),
+    pattern: '[0-9]{1,4}',
+    hint: t('A whole number from 0 to 1440'),
+    ok: t('Pause'),
+  });
+  if (minutes !== null) act({ action: 'pause', mac: speaker.mac, minutes: Number(minutes) });
+}
+
+function resumeSpeaker(speaker) {
+  act({ action: 'resume', mac: speaker.mac });
+}
+
+function pausedLabel(speaker) {
+  if (!speaker.paused_until) return t('Paused');
+  const time = new Date(speaker.paused_until * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return t('Paused until {time}', { time });
+}
+
 function renderBanner() {
   const banner = document.getElementById('banner');
   const job = state && state.job;
@@ -558,19 +844,19 @@ function renderBanner() {
   if (restartingSince) {
     kind = 'info';
     spinner = true;
-    text = 'Restarting the add-on to apply the new configuration…';
+    text = t('Restarting the add-on to apply the new configuration…');
   } else if (actionError) {
     kind = 'error';
-    text = actionError;
+    text = serverMessage(actionError);
     dismiss = () => { actionError = ''; render(); };
   } else if (job && job.id !== dismissedJobId) {
     if (job.state === 'running') {
       kind = 'info';
       spinner = true;
-      text = job.message;
+      text = serverMessage(job.message);
     } else if (Date.now() / 1000 - job.updated < RECENT_JOB_SECONDS) {
       kind = job.state === 'done' ? 'success' : 'error';
-      text = job.message;
+      text = serverMessage(job.message);
       dismiss = () => { dismissedJobId = job.id; render(); };
     }
   }
@@ -580,20 +866,19 @@ function renderBanner() {
   banner.className = `banner ${kind}`;
   if (spinner) banner.append(el('span', { class: 'spinner', 'aria-hidden': 'true' }));
   banner.append(el('p', { role: 'status' }, text));
-  if (dismiss) banner.append(el('button', { type: 'button', 'aria-label': 'Dismiss', onclick: dismiss }, '×'));
+  if (dismiss) banner.append(el('button', { type: 'button', 'aria-label': t('Dismiss'), onclick: dismiss }, '×'));
 }
 
 function renderSpeakers(locked) {
   const box = document.getElementById('speakers');
   box.replaceChildren();
   if (!state) {
-    box.append(el('p', { class: 'muted' }, restartingSince ? 'Waiting for the add-on…' : 'Loading…'));
+    box.append(el('p', { class: 'muted' }, t(restartingSince ? 'Waiting for the add-on…' : 'Loading…')));
     return;
   }
   if (!state.speakers.length) {
     box.append(el('p', { class: 'muted' },
-      'No speaker configured yet: the add-on is in setup mode and its audio outputs are not started. ' +
-      'Scan for your speaker below, pair it, then set it as the primary speaker.'));
+      t('No speaker configured yet: the add-on is in setup mode and its audio outputs are not started. Scan for your speaker below, pair it, then set it as the primary speaker.')));
     return;
   }
   const list = el('ul', { class: 'list' });
@@ -602,11 +887,16 @@ function renderSpeakers(locked) {
       el('div', { class: 'who' },
         el('div', { class: 'name' },
           speaker.name || speaker.device_name || speaker.mac, ' ',
-          el('span', { class: 'badge role' }, speaker.role === 'primary' ? 'Primary' : 'Extra')),
+          el('span', { class: 'badge role' }, t(speaker.role === 'primary' ? 'Primary' : 'Extra'))),
         el('div', { class: 'mac' }, speaker.mac),
-        badges(speaker)),
+        badges(speaker),
+        speaker.paused && el('div', { class: 'badges' }, el('span', { class: 'badge role' }, pausedLabel(speaker)))),
       el('div', { class: 'actions' },
-        (!speaker.paired || !speaker.trusted) && button('Pair', 'primary', locked, () => pair(speaker)))));
+        (!speaker.paired || !speaker.trusted) && button(t('Pair'), 'primary', locked, () => pair(speaker)),
+        speaker.paused
+          ? button(t('Resume'), 'primary', locked, () => resumeSpeaker(speaker))
+          : speaker.known && speaker.paired && button(t('Pause'), '', locked, () => pauseSpeaker(speaker)),
+        speaker.known && button(t('Forget'), 'danger', locked, () => forget(speaker, true)))));
   }
   box.append(list);
 }
@@ -625,10 +915,14 @@ function renderDevices(locked) {
   if (!devices.length) {
     const scanned = state.job && state.job.type === 'scan' && state.job.state === 'done';
     const hidden = state.devices.length;
-    let text = 'Click Scan to look for nearby speakers.';
+    let text = t('Click Scan to look for nearby speakers.');
     if (scanned) {
-      text = 'No audio device found. Make sure the speaker is in pairing mode, close to the host, and not connected to a phone, then scan again.';
-      if (hidden) text += ` (${hidden} non-audio device${hidden > 1 ? 's' : ''} hidden.)`;
+      text = t('No audio device found. Make sure the speaker is in pairing mode, close to the host, and not connected to a phone, then scan again.');
+      if (hidden) {
+        text += ' ' + (LANG === 'en'
+          ? `(${hidden} non-audio device${hidden > 1 ? 's' : ''} hidden.)`
+          : t(hidden > 1 ? '({n} non-audio devices hidden.)' : '({n} non-audio device hidden.)', { n: hidden }));
+      }
     }
     box.append(el('p', { class: 'muted', style: 'margin-top: 12px' }, text));
     return;
@@ -637,18 +931,18 @@ function renderDevices(locked) {
   const list = el('ul', { class: 'list' });
   for (const device of devices) {
     const conf = configured.get(device.mac);
-    const role = conf && el('span', { class: 'badge role' }, conf.role === 'primary' ? 'Primary' : 'Extra');
+    const role = conf && el('span', { class: 'badge role' }, t(conf.role === 'primary' ? 'Primary' : 'Extra'));
     list.append(el('li', { class: 'item' },
       el('div', { class: 'who' },
         el('div', { class: 'name' }, device.name || device.mac, ' ', role),
         el('div', { class: 'mac' }, device.mac),
         badges(device)),
       el('div', { class: 'actions' },
-        (!device.paired || !device.trusted) && button('Pair', 'primary', locked, () => pair(device)),
+        (!device.paired || !device.trusted) && button(t('Pair'), 'primary', locked, () => pair(device)),
         device.paired && !(conf && conf.role === 'primary') &&
-          button('Set as primary', '', locked, () => setPrimary(device, primary)),
-        device.paired && primary && !conf && button('Add as extra', '', locked, () => addExtra(device)),
-        device.known && button('Forget', 'danger', locked, () => forget(device, conf)))));
+          button(t('Set as primary'), '', locked, () => setPrimary(device, primary)),
+        device.paired && primary && !conf && button(t('Add as extra'), '', locked, () => addExtra(device)),
+        device.known && button(t('Forget'), 'danger', locked, () => forget(device, conf)))));
   }
   box.append(list);
 }
@@ -663,7 +957,7 @@ function render() {
   const scan = document.getElementById('scan');
   const scanning = state && state.busy && state.job && state.job.type === 'scan';
   scan.disabled = locked;
-  scan.textContent = scanning ? 'Scanning…' : 'Scan (30 s)';
+  scan.textContent = t(scanning ? 'Scanning…' : 'Scan (30 s)');
 }
 
 document.getElementById('scan').addEventListener('click', () => act({ action: 'scan' }));
@@ -679,6 +973,7 @@ const stopDragging = () => {
 document.addEventListener('pointerup', stopDragging);
 document.addEventListener('pointercancel', stopDragging);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+applyStaticTranslations();
 refresh();
 </script>
 </body>
