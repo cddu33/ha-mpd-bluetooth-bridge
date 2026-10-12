@@ -34,7 +34,8 @@ options=$(options_json)
 speaker_json() {
     bt_device_json "${2^^}" | jq -c --arg role "$1" --arg name "$3" \
         --argjson latency "$(latency_for_mac "$2")" \
-        '. + {role: $role, device_name: .name, name: $name, latency_offset_ms: $latency}'
+        --argjson pause "$(pause_info "${2^^}")" \
+        '. + {role: $role, device_name: .name, name: $name, latency_offset_ms: $latency} + $pause'
 }
 
 speakers=()

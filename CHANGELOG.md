@@ -1,5 +1,62 @@
 # Changelog
 
+## 2.8.0
+- Synchronized this fork with upstream `dcybeldesign/ha-mpd-bluetooth-bridge`
+  master (2.4.3 to 2.5.1, listed below). **Set as primary** keeps the
+  previous primary speaker as an extra one *with its sync offset*, so it
+  stays in its synchronized groups. The *Synchronized groups* section of
+  the pairing page is not translated yet (English only).
+
+### Upstream 2.5.1
+- **Set as primary** no longer drops the previous primary speaker. It stays
+  configured as an extra speaker, so changing the primary speaker in the
+  pairing page doesn't make another speaker vanish from **Configured
+  speakers**. The confirmation dialog says so. Until now the previous
+  primary was replaced and had to be scanned and added again. Reported in
+  [#8](https://github.com/dcybeldesign/ha-mpd-bluetooth-bridge/issues/8).
+
+### Upstream 2.5.0
+- Added **Pause** and **Resume** for each configured speaker in the pairing
+  page, so another device, such as a phone already paired with the speaker,
+  can use it without unpairing it from the host. Pause disconnects the
+  speaker, keeps its pairing, refuses any reconnection from it and stops
+  the add-on from reconnecting it; its `media_player` becomes unavailable
+  meanwhile. Choose after how many minutes the add-on reconnects by itself,
+  or `0` to wait for **Resume**. A pause never survives an add-on restart.
+  See [Letting another device use a speaker](README.md#letting-another-device-use-a-speaker-pause).
+  Suggested in
+  [#8](https://github.com/dcybeldesign/ha-mpd-bluetooth-bridge/issues/8).
+- The pairing page now follows your browser's language: French or English
+  (English when yours isn't available). Texts come from built-in
+  dictionaries, nothing is sent to an online translation service, and the
+  page's messages are translated too, including pairing errors. Add
+  `?lang=fr` or `?lang=en` to the page's address to force a language.
+  Another language can be added by contribution with a new dictionary at
+  the top of `webui/www/index.html`.
+
+### Upstream 2.4.3
+- The pairing page now confirms Secure Simple Pairing prompts by itself.
+  Some speakers ask the host to confirm a number even though the page
+  registers as a headless device, and the page never answered, so pairing
+  ended with `AuthenticationTimeout`. The page now watches the pairing
+  session and answers "yes" when a confirmation is requested. A PIN code
+  request is still not answered and still needs the manual procedure.
+  The page's error message for `AuthenticationTimeout` and
+  `AuthenticationFailed` now also mentions that the speaker may be waiting
+  for a confirmation or PIN code, and the README troubleshooting section
+  explains it. Reported in
+  [#7](https://github.com/dcybeldesign/ha-mpd-bluetooth-bridge/issues/7).
+- Added a **Forget** button on each speaker in the pairing page's
+  "Configured speakers" section, so a configured speaker can be unpaired
+  from the page without scanning first. It warns you when the speaker is
+  still configured in the add-on. Suggested while discussing
+  [#8](https://github.com/dcybeldesign/ha-mpd-bluetooth-bridge/issues/8).
+- Fixed the pairing page listing a speaker as still paired and connected
+  right after Forget (the list was refreshed before Bluetooth had finished
+  removing it).
+- Fixed a stray "Name shown in Home Assistant" field showing up in the
+  Forget confirmation of the pairing page, where no name is needed.
+
 ## 2.7.0
 - Added an optional **`mpd_password`** option: MPD clients (Music
   Assistant included) must then supply it to connect. Leave it empty to
