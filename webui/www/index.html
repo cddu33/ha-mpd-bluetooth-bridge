@@ -143,21 +143,21 @@
   </section>
 
   <section class="card" id="groups-section" hidden>
-    <h2>Synchronized groups</h2>
-    <p class="muted">
+    <h2 id="groups-title">Synchronized groups</h2>
+    <p id="groups-help" class="muted">
       A group plays the same audio on several speakers, in sync, as one more media_player in Home Assistant
       (and in Music Assistant through its DLNA provider). If a speaker sounds late, play the test ticks and
       raise its offset until you hear a single tick. Offsets apply live and settle gradually over a few seconds.
     </p>
     <div id="groups"></div>
     <form id="group-form" class="group-form" hidden>
-      <h3>New group</h3>
+      <h3 id="group-new-title">New group</h3>
       <label class="field">
-        Name shown in Home Assistant
+        <span id="group-name-text">Name shown in Home Assistant</span>
         <input id="group-name" type="text" maxlength="64" required pattern='[^"\\]+' title="Quotes and backslashes are not allowed">
       </label>
       <fieldset id="group-members">
-        <legend>Speakers (at least two)</legend>
+        <legend id="group-members-legend">Speakers (at least two)</legend>
       </fieldset>
       <div class="buttons">
         <button id="group-create" type="submit" class="primary">Create group</button>
@@ -316,6 +316,59 @@ const TRANSLATIONS = {
     'Set a primary speaker first.': "Définissez d'abord une enceinte principale.",
     'This speaker is already the primary speaker.': 'Cette enceinte est déjà l\'enceinte principale.',
     'This speaker is already an extra speaker.': 'Cette enceinte est déjà une enceinte supplémentaire.',
+    // Groupes synchronisés.
+    'Synchronized groups': 'Groupes synchronisés',
+    'A group plays the same audio on several speakers, in sync, as one more media_player in Home Assistant (and in Music Assistant through its DLNA provider). If a speaker sounds late, play the test ticks and raise its offset until you hear a single tick. Offsets apply live and settle gradually over a few seconds.':
+      "Un groupe joue le même son sur plusieurs enceintes, en synchro, comme un media_player de plus dans Home Assistant (et dans Music Assistant via son fournisseur DLNA). Si une enceinte sonne en retard, jouez les tics de test et augmentez son décalage jusqu'à n'entendre qu'un seul tic. Les décalages s'appliquent en direct et se stabilisent en quelques secondes.",
+    'New group': 'Nouveau groupe',
+    'Speakers (at least two)': 'Enceintes (au moins deux)',
+    'Create group': 'Créer le groupe',
+    'Playing': 'En lecture',
+    'Awake': 'Éveillé',
+    'Standby': 'En veille',
+    'No speaker connected': 'Aucune enceinte connectée',
+    'Restart the add-on to start it': "Redémarrez l'add-on pour le démarrer",
+    'Not started': 'Non démarré',
+    'Test ticks': 'Tics de test',
+    'Delete': 'Supprimer',
+    'disconnected': 'déconnectée',
+    'Sync offset of {name}, in milliseconds': 'Décalage de synchro de {name}, en millisecondes',
+    'Could not save the offset of {name}: {msg}': "Impossible d'enregistrer le décalage de {name} : {msg}",
+    'Create the group {name}?': 'Créer le groupe {name} ?',
+    'The add-on saves it to its configuration and restarts. The group then shows up as a new media_player in Home Assistant within a few minutes.':
+      "L'add-on l'enregistre dans sa configuration et redémarre. Le groupe apparaît ensuite comme un nouveau media_player dans Home Assistant en quelques minutes.",
+    'Delete the group {name}?': 'Supprimer le groupe {name} ?',
+    'The add-on removes it from its configuration and restarts. Its media_player in Home Assistant then becomes unavailable: delete it there if you no longer need it.':
+      "L'add-on le retire de sa configuration et redémarre. Son media_player dans Home Assistant devient alors indisponible : supprimez-le là-bas si vous n'en avez plus besoin.",
+    'Delete and restart': 'Supprimer et redémarrer',
+    'Add at least two speakers (a primary and an extra one) to create a synchronized group.':
+      'Ajoutez au moins deux enceintes (une principale et une supplémentaire) pour créer un groupe synchronisé.',
+    'No synchronized group yet.': 'Aucun groupe synchronisé pour l\'instant.',
+    'Pick at least two speakers for a synchronized group.': 'Choisissez au moins deux enceintes pour un groupe synchronisé.',
+    // Raisons pour lesquelles run.sh ignore un groupe (groups.json).
+    'This group has no name.': "Ce groupe n'a pas de nom.",
+    'A synchronized group needs at least two speakers configured in this add-on.':
+      'Un groupe synchronisé a besoin d\'au moins deux enceintes configurées dans cet add-on.',
+    'Another group already uses this name.': 'Un autre groupe utilise déjà ce nom.',
+    // Messages des scripts CGI pour les groupes.
+    'A group with this name already exists.': 'Un groupe portant ce nom existe déjà.',
+    '{mac} is not a speaker configured in this add-on.': "{mac} n'est pas une enceinte configurée dans cet add-on.",
+    'This group is no longer in the configuration.': "Ce groupe n'est plus dans la configuration.",
+    'The offset must be a number of milliseconds.': 'Le décalage doit être un nombre de millisecondes.',
+    'This group is not running: restart the add-on to start it.':
+      "Ce groupe n'est pas démarré : redémarrez l'add-on pour le démarrer.",
+    "None of this group's speakers is connected right now.": "Aucune enceinte de ce groupe n'est connectée pour l'instant.",
+    'gst-launch-1.0 is missing from the add-on image, check the build log.':
+      "gst-launch-1.0 manque dans l'image de l'add-on, consultez le journal de construction.",
+    'Another operation is still running, wait for it to finish.':
+      "Une autre opération est encore en cours, attendez qu'elle se termine.",
+    'Playing test ticks for {n} seconds: raise the offset of any speaker that ticks late, until you hear a single tick.':
+      "Tics de test pendant {n} secondes : augmentez le décalage de toute enceinte en retard, jusqu'à n'entendre qu'un seul tic.",
+    'Test ticks finished.': 'Tics de test terminés.',
+    'Could not play the test ticks (exit code {rc}), see the add-on log.':
+      "Impossible de jouer les tics de test (code de sortie {rc}), consultez le journal de l'add-on.",
+    'Expected a JSON object body.': 'Corps JSON attendu.',
+    'The operation was interrupted, try again.': "L'opération a été interrompue, réessayez.",
     'Unknown action.': 'Action inconnue.',
   },
 };
@@ -351,6 +404,9 @@ const SERVER_PATTERNS = [
   [/^The Supervisor rejected the new configuration: (.*)$/s, 'The Supervisor rejected the new configuration: {error}', ['error']],
   [/^Could not forget (\S+)\.$/, 'Could not forget {mac}.', ['mac']],
   [/^Could not release (\S+)\.$/, 'Could not release {mac}.', ['mac']],
+  [/^(\S+) is not a speaker configured in this add-on\.$/, '{mac} is not a speaker configured in this add-on.', ['mac']],
+  [/^Playing test ticks for (\d+) seconds: raise the offset of any speaker that ticks late, until you hear a single tick\.$/, 'Playing test ticks for {n} seconds: raise the offset of any speaker that ticks late, until you hear a single tick.', ['n']],
+  [/^Could not play the test ticks \(exit code (\d+)\), see the add-on log\.$/, 'Could not play the test ticks (exit code {rc}), see the add-on log.', ['rc']],
 ];
 
 // Échec d'appairage : « Pairing with X failed (raison). Put the speaker ... »
@@ -382,10 +438,13 @@ function serverMessage(message) {
 function applyStaticTranslations() {
   document.documentElement.lang = LANG;
   document.title = t(document.title);
-  for (const id of ['subtitle', 'configured-title', 'find-title', 'find-help', 'show-all-text', 'dialog-cancel']) {
+  for (const id of ['subtitle', 'configured-title', 'find-title', 'find-help', 'show-all-text', 'dialog-cancel',
+    'groups-title', 'groups-help', 'group-new-title', 'group-name-text', 'group-members-legend', 'group-create']) {
     const node = document.getElementById(id);
     node.textContent = t(node.textContent.trim().replace(/\s+/g, ' '));
   }
+  const groupName = document.getElementById('group-name');
+  groupName.title = t(groupName.title);
 }
 
 let state = null;           // dernière réponse de status.cgi
@@ -568,6 +627,7 @@ const GROUP_STATES = {
   missing: ['badge', 'No speaker connected'],
   restart: ['badge', 'Restart the add-on to start it'],
   invalid: ['badge err', 'Not started'],
+  // Textes traduits à l'affichage (groupItem).
 };
 
 function speakerLabel(mac) {
@@ -622,7 +682,7 @@ async function flushLatency() {
         if (latencyDrafts.get(mac) === ms) latencyDrafts.delete(mac);
       } catch (error) {
         latencyDrafts.delete(mac);
-        actionError = `Could not save the offset of ${speakerLabel(mac)}: ${error.message}`;
+        actionError = t('Could not save the offset of {name}: {msg}', { name: speakerLabel(mac), msg: serverMessage(error.message) });
         groupsSignature = '';
         render();
       }
@@ -638,11 +698,11 @@ function latencyRow(mac, disabled) {
   const value = currentLatency(mac);
   return el('div', { class: 'offset-row', 'data-mac': mac },
     el('span', { class: 'offset-name' }, name,
-      speaker && !speaker.connected && el('span', { class: 'hint' }, ' (disconnected)')),
+      speaker && !speaker.connected && el('span', { class: 'hint' }, ` (${t('disconnected')})`)),
     button(`−${LATENCY_STEP}`, 'small', disabled, () => setLatency(mac, currentLatency(mac) - LATENCY_STEP)),
     el('input', {
       type: 'range', min: 0, max: LATENCY_MAX, step: LATENCY_STEP, value, disabled,
-      'aria-label': `Sync offset of ${name}, in milliseconds`,
+      'aria-label': t('Sync offset of {name}, in milliseconds', { name }),
       oninput: (event) => setLatency(mac, Number(event.target.value)),
       onpointerdown: () => { draggingSlider = true; },
     }),
@@ -655,11 +715,11 @@ function groupItem(group, locked, tuningDisabled) {
   const running = ['playing', 'idle', 'standby'].includes(group.state);
   return el('li', { class: 'item' },
     el('div', { class: 'who' },
-      el('div', { class: 'name' }, group.name, ' ', el('span', { class: badgeClass }, badgeText)),
-      group.error && el('div', { class: 'hint err' }, group.error)),
+      el('div', { class: 'name' }, group.name, ' ', el('span', { class: badgeClass }, t(badgeText))),
+      group.error && el('div', { class: 'hint err' }, t(group.error))),
     el('div', { class: 'actions' },
-      button('Test ticks', '', locked || !running, () => act({ action: 'test_ticks', name: group.name })),
-      button('Delete', 'danger', locked, () => removeGroup(group))),
+      button(t('Test ticks'), '', locked || !running, () => act({ action: 'test_ticks', name: group.name })),
+      button(t('Delete'), 'danger', locked, () => removeGroup(group))),
     el('div', { class: 'tuning' }, ...group.members.map((mac) => latencyRow(mac, tuningDisabled))));
 }
 
@@ -679,9 +739,9 @@ async function createGroup(event) {
     return;
   }
   const confirmed = await ask({
-    title: `Create the group ${name}?`,
-    text: 'The add-on saves it to its configuration and restarts. The group then shows up as a new media_player in Home Assistant within a few minutes.',
-    ok: 'Save and restart',
+    title: t('Create the group {name}?', { name }),
+    text: t('The add-on saves it to its configuration and restarts. The group then shows up as a new media_player in Home Assistant within a few minutes.'),
+    ok: t('Save and restart'),
   });
   if (confirmed === null) return;
   field.value = '';
@@ -691,9 +751,9 @@ async function createGroup(event) {
 
 async function removeGroup(group) {
   const confirmed = await ask({
-    title: `Delete the group ${group.name}?`,
-    text: 'The add-on removes it from its configuration and restarts. Its media_player in Home Assistant then becomes unavailable: delete it there if you no longer need it.',
-    ok: 'Delete and restart',
+    title: t('Delete the group {name}?', { name: group.name }),
+    text: t('The add-on removes it from its configuration and restarts. Its media_player in Home Assistant then becomes unavailable: delete it there if you no longer need it.'),
+    ok: t('Delete and restart'),
     danger: true,
   });
   if (confirmed !== null) act({ action: 'remove_group', name: group.name });
@@ -719,8 +779,8 @@ function renderGroups(locked) {
   box.replaceChildren();
   if (!state.groups.length) {
     box.append(el('p', { class: 'muted', style: 'margin-top: 12px' }, state.speakers.length < 2
-      ? 'Add at least two speakers (a primary and an extra one) to create a synchronized group.'
-      : 'No synchronized group yet.'));
+      ? t('Add at least two speakers (a primary and an extra one) to create a synchronized group.')
+      : t('No synchronized group yet.')));
     return;
   }
   const list = el('ul', { class: 'list' });
